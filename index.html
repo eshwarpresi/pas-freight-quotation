@@ -440,7 +440,7 @@ body.capturing .drag-handle{visibility:hidden;}
 .arc-info .a-ref{font-size:13px;font-weight:800;color:var(--navy);letter-spacing:.2px;}
 .arc-info .a-cust{font-size:12px;color:var(--ink);margin-top:2px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .arc-info .a-meta{font-size:10.5px;color:var(--muted);margin-top:6px;display:flex;justify-content:space-between;padding-top:6px;border-top:1px dashed var(--line);}
-.arc-actions{display:flex;gap:6px;padding:10px 13px 13px;}
+.arc-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:10px 13px 13px;}
 .arc-btn{
   flex:1;border:1px solid var(--line);background:#f8fafc;border-radius:8px;padding:7px 4px;font-size:10.5px;font-weight:700;
   color:var(--navy);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;transition:.12s ease;
@@ -482,6 +482,7 @@ body.capturing .drag-handle{visibility:hidden;}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 1 3 6.7"/><path d="M3 4v6h6"/></svg>
       Reset this mode
     </button>
+    <button class="btn btn-ghost" onclick="duplicateCurrentAsNew()">${ICON_COPY} Duplicate as New</button>
     <button class="btn btn-ghost" onclick="openArchive()">${ICON_ARCHIVE} <span id="archiveCount">Archive</span></button>
     <button class="btn btn-ghost" onclick="downloadPNG()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
@@ -723,6 +724,7 @@ I.x=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
 I.search=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>`;
 I.chevron=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m6 9 6 6 6-6"/></svg>`;
 I.track=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s7-6.3 7-12A7 7 0 0 0 5 10c0 5.7 7 12 7 12Z"/><circle cx="12" cy="10" r="2.3"/></svg>`;
+I.copy=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
 
 /* Replace placeholders in the HTML string with actual svg icons */
 document.addEventListener('DOMContentLoaded', function(){
@@ -731,7 +733,7 @@ document.addEventListener('DOMContentLoaded', function(){
     ICON_HASH:I.hash, ICON_WEIGHT:I.weight, ICON_WEIGHT2:I.weight2, ICON_CBM:I.cbm, ICON_CLOCK:I.clock,
     ICON_CARGO:I.cargo, ICON_MODEICON:I.container, ICON_DOLLAR:I.dollar, ICON_ROE:I.roe, ICON_DOC:I.doc,
     ICON_SHIELD:I.shield, ICON_THUMB:I.thumb, ICON_TIME:I.time, ICON_SECURE:I.secure, ICON_GLOBE:I.globe,
-    ICON_CALC:I.calc, ICON_PLUS:I.plus, ICON_ARCHIVE:I.archive, ICON_ARCHIVE_X:I.x, ICON_LB_X:I.x, ICON_BIN:I.bin, ICON_TRACK:I.track, ICON_SEARCH:I.search
+    ICON_CALC:I.calc, ICON_PLUS:I.plus, ICON_ARCHIVE:I.archive, ICON_ARCHIVE_X:I.x, ICON_LB_X:I.x, ICON_BIN:I.bin, ICON_TRACK:I.track, ICON_SEARCH:I.search, ICON_COPY:I.copy
   };
   document.body.innerHTML = document.body.innerHTML.replace(/\$\{(ICON_[A-Z0-9]+)\}/g, (m,k)=> map[k] || '');
   boot();
@@ -861,6 +863,10 @@ let store = {}; // per-mode data, loaded/created lazily
 let globalFields = {companyName:'PAS FREIGHT SERVICES PVT LTD', companyTag:'IMPORT EXPORT AIR SEA FCL/LCL/DOMESTIC TRANSPORT AND FTWZ WAREHOUSING',
   footerAddr:'Site No:171, Arkavathey Layout, 7th Block, Sy No: 90/3, Jakkur-BDA, Bangalore - 560092, Karnataka, India.', footerPhone:'+91 9036101201', footerEmail:'shivu@pasfreight.com', footerGst:'—'};
 
+function generateQuoteRef(){
+  return 'SPIM'+Math.floor(100000+Math.random()*900000);
+}
+
 function freshModeData(cfg){
   const rows = JSON.parse(JSON.stringify(cfg.rows));
   const headerRoe = parseFloat((cfg.defaults.roe||'1').toString().replace(/,/g,'')) || 1;
@@ -872,7 +878,7 @@ function freshModeData(cfg){
     else r.roe = (r.roe===undefined || r.roe===null) ? 1 : r.roe;
   });
   return {
-    fields: Object.assign({quoteRef:'SPIM'+Math.floor(100000+Math.random()*900000)}, cfg.defaults),
+    fields: Object.assign({quoteRef:generateQuoteRef()}, cfg.defaults),
     rows: rows,
     termsHead: cfg.termsHead,
     terms: cfg.terms.slice()
@@ -950,6 +956,7 @@ function boot(){
   // quote date picker (native calendar + manual typing)
   const dateEl = document.getElementById('fldQuoteDate');
   dateEl.addEventListener('input', ()=>{ store[currentMode].fields.quoteDate = dateEl.value; saveDraftDebounced(); });
+  dateEl.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); dateEl.blur(); focusNextField(dateEl); } });
 
   renderMode(currentMode);
   attachGlobalListeners();
@@ -1034,6 +1041,47 @@ function renderMode(key){
   recalc();
 }
 
+/* ---------------- KEYBOARD FLOW ----------------
+   Lets a whole quote be filled in without touching the mouse: Enter moves forward through
+   the summary fields in a sensible order, then into the charge table row by row, adding a
+   new row automatically once the last field of the last row is confirmed. */
+function getFlowFields(){
+  return Array.from(document.querySelectorAll('#summaryGrid .qc-field .val, #summaryGrid .qc-field input.date-input'));
+}
+function focusNextField(afterEl){
+  const fields = getFlowFields();
+  const idx = fields.indexOf(afterEl);
+  if(idx>=0 && idx < fields.length-1){
+    fields[idx+1].focus();
+  } else {
+    const firstDesc = document.querySelector('#rowsBody .desc-cell .combo-field');
+    if(firstDesc) firstDesc.focus();
+  }
+}
+const ROW_FIELD_ORDER = ['desc','cur','rate','qty','unitType'];
+function focusRowField(idx, fieldName){
+  let el;
+  if(fieldName==='desc' || fieldName==='cur' || fieldName==='unitType'){
+    el = document.querySelector(`.combo-field[data-idx="${idx}"][data-field="${fieldName}"]`);
+  } else {
+    el = document.querySelector(`input[data-idx="${idx}"][data-field="${fieldName}"]`);
+  }
+  if(el) el.focus();
+}
+function focusNextRowField(idx, fieldName){
+  const pos = ROW_FIELD_ORDER.indexOf(fieldName);
+  if(pos>=0 && pos < ROW_FIELD_ORDER.length-1){
+    focusRowField(idx, ROW_FIELD_ORDER[pos+1]);
+  } else {
+    const rows = store[currentMode].rows;
+    if(idx < rows.length-1){
+      focusRowField(idx+1, 'desc');
+    } else {
+      addRow(); // last field of the last row — jump straight into a fresh row
+    }
+  }
+}
+
 function attachFieldListeners(){
   document.querySelectorAll('#summaryGrid [data-key], .qc-mode-badge [data-key="quoteRef"]').forEach(el=>{
     el.oninput = ()=>{
@@ -1044,6 +1092,14 @@ function attachFieldListeners(){
       if(k==='roe' || k==='roe2'){ syncAllRowRoe(); renderRows(); }
       recalc();
     };
+    // plain typed fields: Enter confirms and moves to the next field instead of adding a line break
+    if(el.classList.contains('val') && el.dataset.key !== 'quoteRef'){
+      el.addEventListener('keydown', (e)=>{
+        if(e.key==='Enter'){ e.preventDefault(); el.blur(); focusNextField(el); }
+      });
+    } else if(el.dataset.key === 'quoteRef'){
+      el.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); el.blur(); } });
+    }
   });
   document.querySelector('.tt-head').oninput = (e)=>{ store[currentMode].termsHead = e.target.textContent; saveDraftDebounced(); };
 }
@@ -1196,6 +1252,11 @@ function commitCombo(value){
   if(refreshAllRows) renderRows();
   recalc();
   closeCombo();
+  if(scope==='field'){
+    focusNextField(field);
+  } else {
+    focusNextRowField(+field.dataset.idx, fieldName);
+  }
 }
 
 function closeCombo(){
@@ -1267,13 +1328,21 @@ function renderRows(){
     `;
     tbody.appendChild(tr);
   });
-  // plain numeric field listeners (rate / qty)
+  // plain numeric field listeners (rate / qty / roe)
   tbody.querySelectorAll('.combo-input[data-field]').forEach(el=>{
     el.addEventListener('input', ()=>{
       const idx = +el.dataset.idx, field = el.dataset.field;
       const row = store[currentMode].rows[idx];
       row[field] = parseFloat(el.value.replace(/,/g,'')) || 0;
       recalc();
+    });
+    el.addEventListener('keydown', (e)=>{
+      if(e.key==='Enter'){
+        e.preventDefault();
+        const idx = +el.dataset.idx, field = el.dataset.field;
+        el.blur();
+        focusNextRowField(idx, field);
+      }
     });
   });
   // searchable dropdown fields (description / currency / unit-type)
@@ -1435,6 +1504,34 @@ function resetMode(){
   showConfirm('Reset all data for the current mode ('+getCfg(currentMode).label+') back to the sample defaults?', ()=>{
     store[currentMode] = freshModeData(getCfg(currentMode));
     renderMode(currentMode);
+    saveDraftDebounced();
+  });
+}
+
+/* Keeps every charge, customer, and term exactly as-is but assigns a fresh reference
+   number and clears the date — for firing off the next quote to the same customer fast.
+   Deliberately instant (no confirm dialog) since nothing is lost, only the ref/date reset. */
+function duplicateCurrentAsNew(){
+  const data = store[currentMode];
+  data.fields.quoteRef = generateQuoteRef();
+  data.fields.quoteDate = '';
+  renderMode(currentMode);
+  saveDraftDebounced();
+}
+
+/* Clones a saved Archive entry into a brand-new draft (fresh ref + date) in its mode's tab. */
+function duplicateArchiveEntry(id){
+  const arr = loadArchive();
+  const entry = arr.find(e=>e.id===id);
+  if(!entry) return;
+  showConfirm('Duplicate this quotation into the "'+entry.modeLabel+'" tab as a new draft? Any unsaved changes currently in that tab will be replaced.', ()=>{
+    const cloned = JSON.parse(JSON.stringify(entry.snapshot));
+    cloned.fields.quoteRef = generateQuoteRef();
+    cloned.fields.quoteDate = '';
+    store[entry.mode] = cloned;
+    switchMode(entry.mode);
+    document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.key===entry.mode));
+    closeArchive();
     saveDraftDebounced();
   });
 }
@@ -1661,16 +1758,20 @@ function renderArchiveList(){
         ${archiveTab==='saved' ? `
           <button class="arc-btn" data-act="view">${I.eye} View</button>
           <button class="arc-btn primary" data-act="edit">${I.pencil} Edit</button>
+          <button class="arc-btn" data-act="dup">${I.copy} Duplicate</button>
           <button class="arc-btn danger" data-act="del">${I.bin} Delete</button>
         ` : `
           <button class="arc-btn" data-act="view">${I.eye} View</button>
           <button class="arc-btn primary" data-act="restore">${I.restore} Restore</button>
-          <button class="arc-btn danger" data-act="purge">${I.x} Delete forever</button>
+          <button class="arc-btn danger" data-act="purge" style="grid-column:1/3">${I.x} Delete forever</button>
         `}
       </div>
     `;
     card.querySelectorAll('[data-act]').forEach(btn=>{
-      btn.onclick = ()=> archiveAction(entry.id, btn.dataset.act);
+      btn.onclick = ()=> {
+        if(btn.dataset.act === 'dup'){ duplicateArchiveEntry(entry.id); return; }
+        archiveAction(entry.id, btn.dataset.act);
+      };
     });
     grid.appendChild(card);
   });
