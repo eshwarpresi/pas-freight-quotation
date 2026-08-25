@@ -548,6 +548,7 @@ body.capturing .drag-handle{visibility:hidden;}
   color:#fff; background:#1c2740; transition:.12s ease; position:relative; overflow:hidden;
 }
 .calc-btn:active{transform:scale(.93);}
+.calc-btn.kbd-press{transform:scale(.93); filter:brightness(1.25); box-shadow:0 0 0 2px rgba(255,255,255,.25) inset;}
 .calc-num{background:#1c2740;}
 .calc-num:hover{background:#25314e;}
 .calc-fn{background:#2b3654; font-size:15px; color:#c9d3ea;}
@@ -2312,17 +2313,27 @@ document.addEventListener('DOMContentLoaded', ()=>{
       else if(btn.dataset.act !== undefined) handleAction(btn.dataset.act);
     });
 
+    function flashButton(selector){
+      const btn = grid.querySelector(selector);
+      if(!btn) return;
+      btn.classList.remove('kbd-press');
+      void btn.offsetWidth; // restart animation if key is held/repeated
+      btn.classList.add('kbd-press');
+      setTimeout(()=>btn.classList.remove('kbd-press'), 140);
+    }
+
     document.addEventListener('keydown', (e)=>{
       if(!overlay.classList.contains('show')) return;
-      if(e.key >= '0' && e.key <= '9'){ pressNum(e.key); return; }
-      if(e.key === '.'){ pressDecimal(); return; }
-      if(e.key === '+'){ pressOp('+'); return; }
-      if(e.key === '-'){ pressOp('−'); return; }
-      if(e.key === '*'){ pressOp('×'); return; }
-      if(e.key === '/'){ e.preventDefault(); pressOp('÷'); return; }
-      if(e.key === '%'){ pressPercent(); return; }
-      if(e.key === 'Enter' || e.key === '='){ e.preventDefault(); pressEquals(); return; }
-      if(e.key === 'Backspace'){ pressBackspace(); return; }
+      if(e.key >= '0' && e.key <= '9'){ flashButton(`.calc-btn[data-num="${e.key}"]`); pressNum(e.key); return; }
+      if(e.key === '.'){ flashButton('.calc-btn[data-act="decimal"]'); pressDecimal(); return; }
+      if(e.key === '+'){ flashButton('.calc-btn[data-op="+"]'); pressOp('+'); return; }
+      if(e.key === '-'){ flashButton('.calc-btn[data-op="−"]'); pressOp('−'); return; }
+      if(e.key === '*'){ flashButton('.calc-btn[data-op="×"]'); pressOp('×'); return; }
+      if(e.key === '/'){ e.preventDefault(); flashButton('.calc-btn[data-op="÷"]'); pressOp('÷'); return; }
+      if(e.key === '%'){ flashButton('.calc-btn[data-act="percent"]'); pressPercent(); return; }
+      if(e.key === 'Enter' || e.key === '='){ e.preventDefault(); flashButton('.calc-btn[data-act="equals"]'); pressEquals(); return; }
+      if(e.key === 'Backspace'){ flashButton('.calc-btn[data-act="backspace"]'); pressBackspace(); return; }
+      if((e.key === 'Delete' || (e.shiftKey && e.key.toLowerCase()==='c'))){ flashButton('.calc-btn[data-act="clear"]'); pressClear(); return; }
       if(e.key === 'Escape'){ closeCalc(); return; }
     });
 
