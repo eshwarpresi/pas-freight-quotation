@@ -310,9 +310,31 @@ select.cur-select{
 .combo-list .combo-opt mark{background:#ffe8b0;color:inherit;border-radius:2px;}
 .combo-list .combo-empty{padding:12px;font-size:11.5px;color:var(--muted);}
 .desc-cell{display:flex;align-items:center;gap:8px;}
-.desc-cell .ic{width:20px;height:20px;color:var(--mode-c);flex:none;}
-.desc-cell .ic svg{width:16px;height:16px;}
+.desc-cell .ic{
+  width:26px;height:26px;color:#fff;flex:none;background:var(--mode-c);
+  border-radius:7px;display:flex;align-items:center;justify-content:center;
+  cursor:pointer;border:none;padding:0;transition:.15s ease;
+}
+.desc-cell .ic:hover{filter:brightness(1.12); transform:scale(1.06);}
+.desc-cell .ic svg{width:15px;height:15px;}
 .desc-cell .combo-field{min-width:150px;flex:1;}
+
+.icon-picker-panel{
+  position:fixed; z-index:1400; display:none; background:#fff; border-radius:12px;
+  box-shadow:0 16px 40px rgba(20,30,60,.22), 0 0 0 1px rgba(20,30,60,.06);
+  padding:10px; width:216px;
+}
+.icon-picker-panel.open{display:block;}
+.icon-picker-title{font-size:10.5px;font-weight:800;color:var(--muted);letter-spacing:.5px;padding:2px 4px 8px;}
+.icon-picker-grid{display:grid; grid-template-columns:repeat(5,1fr); gap:6px;}
+.icon-picker-opt{
+  width:36px;height:36px;border-radius:8px;border:1px solid var(--line);background:#f7f8fb;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--navy);
+  transition:.12s ease;
+}
+.icon-picker-opt svg{width:17px;height:17px;}
+.icon-picker-opt:hover{background:#eef1f8; transform:scale(1.07);}
+.icon-picker-opt.sel{background:var(--mode-c); border-color:var(--mode-c); color:#fff;}
 .cur-cell .combo-field{width:84px;}
 .unit-cell{display:flex;gap:4px;}
 .unit-cell .qty-input{width:40px;text-align:center;}
@@ -799,6 +821,7 @@ body.capturing .drag-handle{visibility:hidden;}
   </div>
 </div>
 <div id="comboPanel" class="no-export"></div>
+<div id="iconPickerPanel" class="icon-picker-panel no-export"></div>
 
 <!-- ===== Floating Calculator ===== -->
 <button class="calc-fab no-export" id="calcFab" title="Calculator" aria-label="Open calculator">${ICON_CALC}</button>
@@ -1420,6 +1443,10 @@ function commitCombo(value){
     const row = store[currentMode].rows[idx];
     if(row){
       row[fieldName] = value;
+      if(fieldName==='desc' && !row.iconManual){
+        const guessed = guessIconForDesc(value);
+        if(guessed && guessed !== row.icon){ row.icon = guessed; updateRowIconDom(idx, guessed); }
+      }
       if(fieldName==='cur'){
         syncRowRoeOnCurrencyChange(row);
         const roeInput = document.querySelector(`.row-roe-input[data-idx="${idx}"]`);
@@ -1467,6 +1494,83 @@ document.addEventListener('mousedown', (e)=>{
   closeCombo();
 });
 
+/* ---------------- CHARGE-LINE ICONS (auto-detect + manual picker) ---------------- */
+/* Suggests an icon the moment a charge description is typed or picked — checked in order,
+   most-specific phrase first, so "Air Freight" doesn't get caught by a generic word. */
+const ICON_KEYWORDS = [
+  {icon:'plane',  words:['air freight','airfreight','air cargo','airline','flight','awb','airway bill','air charges','fuel surcharge','security surcharge','air export','air import']},
+  {icon:'ship',   words:['ocean freight','sea freight','vessel','shipping line','ocean charges','seaway','sea export','sea import','bl fee','bill of lading']},
+  {icon:'container', words:['container','fcl','lcl','cfs','cbm charges','stuffing','destuffing']},
+  {icon:'truck',  words:['transportation','transport charges','trucking','road freight','delivery charges','pickup charges','drayage','last mile','local transport']},
+  {icon:'secure', words:['customs','insurance','duty','clearance','security charges','inspection']},
+  {icon:'box',    words:['loading','unloading','handling','packing','palletization','crating','warehouse']},
+  {icon:'dollar', words:['bank charges','forex','exchange charges','finance charges','lc charges','remittance']},
+  {icon:'weight', words:['weight charges','chargeable weight']},
+  {icon:'time',   words:['demurrage','detention','storage charges','delay charges']},
+  {icon:'globe',  words:['destination charges','origin charges','thc','terminal handling']},
+  {icon:'doc',    words:['documentation','document','manifest','do charges','paperwork','certificate','exwork']},
+];
+function guessIconForDesc(text){
+  const t = (text||'').toLowerCase().trim();
+  if(!t) return null;
+  for(const grp of ICON_KEYWORDS){
+    for(const w of grp.words){
+      if(t.includes(w)) return grp.icon;
+    }
+  }
+  return null;
+}
+function updateRowIconDom(idx, iconKey){
+  const btn = document.querySelector(`.ic[data-idx="${idx}"]`);
+  if(btn) btn.innerHTML = I[iconKey] || I.doc;
+}
+
+/* The picker grid — a curated set of icons relevant to freight charge lines. */
+const ICON_PICKER_LIST = [
+  {key:'plane', label:'Air / Flight'}, {key:'ship', label:'Ocean / Sea'}, {key:'container', label:'Container'},
+  {key:'truck', label:'Transport'}, {key:'secure', label:'Customs / Insurance'}, {key:'box', label:'Handling'},
+  {key:'doc', label:'Documentation'}, {key:'dollar', label:'Bank / Forex'}, {key:'weight', label:'Weight'},
+  {key:'time', label:'Demurrage / Storage'}, {key:'globe', label:'Terminal / THC'}, {key:'cargo', label:'General cargo'},
+];
+let iconPickerIdx = null;
+function openIconPicker(idx, anchorEl){
+  iconPickerIdx = idx;
+  const panel = document.getElementById('iconPickerPanel');
+  const row = store[currentMode].rows[idx];
+  const currentIcon = row ? row.icon : null;
+  panel.innerHTML = `
+    <div class="icon-picker-title">CHOOSE AN ICON</div>
+    <div class="icon-picker-grid">
+      ${ICON_PICKER_LIST.map(o=>`<button type="button" class="icon-picker-opt${o.key===currentIcon?' sel':''}" data-key="${o.key}" title="${o.label}">${I[o.key]}</button>`).join('')}
+    </div>
+  `;
+  const rect = anchorEl.getBoundingClientRect();
+  panel.style.left = Math.min(rect.left, window.innerWidth - 230) + 'px';
+  panel.style.top = (rect.bottom + 6) + 'px';
+  panel.classList.add('open');
+  panel.querySelectorAll('.icon-picker-opt').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const key = btn.dataset.key;
+      const r = store[currentMode].rows[iconPickerIdx];
+      if(r){ r.icon = key; r.iconManual = true; updateRowIconDom(iconPickerIdx, key); }
+      closeIconPicker();
+    });
+  });
+}
+function closeIconPicker(){
+  const panel = document.getElementById('iconPickerPanel');
+  panel.classList.remove('open');
+  panel.innerHTML = '';
+  iconPickerIdx = null;
+}
+document.addEventListener('mousedown', (e)=>{
+  if(iconPickerIdx===null) return;
+  if(e.target.closest('#iconPickerPanel') || e.target.closest('.ic[data-idx]')) return;
+  closeIconPicker();
+});
+window.addEventListener('scroll', ()=>{ if(iconPickerIdx!==null) closeIconPicker(); }, true);
+window.addEventListener('resize', ()=>{ if(iconPickerIdx!==null) closeIconPicker(); });
+
 function renderRows(){
   const tbody = document.getElementById('rowsBody');
   tbody.innerHTML = '';
@@ -1480,7 +1584,7 @@ function renderRows(){
     tr.innerHTML = `
       <td class="no-export"><span class="drag-handle" title="Drag to reorder">${I.drag}</span></td>
       <td>
-        <div class="desc-cell"><span class="ic">${I[r.icon]||I.doc}</span>
+        <div class="desc-cell"><button type="button" class="ic" data-idx="${idx}" title="Change icon">${I[r.icon]||I.doc}</button>
           <div class="combo-field${descVal?'':' empty'}" tabindex="0" data-combo="charge" data-field="desc" data-idx="${idx}" data-value="${escAttr(descVal)}">
             <span class="cf-text">${escAttr(descVal) || COMBO_PLACEHOLDER.charge}</span><span class="cf-arrow">${I.chevron}</span>
           </div>
@@ -1508,6 +1612,9 @@ function renderRows(){
     tbody.appendChild(tr);
   });
   // plain numeric field listeners (rate / qty / roe)
+  tbody.querySelectorAll('.ic[data-idx]').forEach(btn=>{
+    btn.addEventListener('click', ()=> openIconPicker(+btn.dataset.idx, btn));
+  });
   tbody.querySelectorAll('.combo-input[data-field]').forEach(el=>{
     el.addEventListener('input', ()=>{
       const idx = +el.dataset.idx, field = el.dataset.field;
