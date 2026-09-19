@@ -907,6 +907,16 @@ I.search=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-widt
 I.chevron=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m6 9 6 6 6-6"/></svg>`;
 I.track=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s7-6.3 7-12A7 7 0 0 0 5 10c0 5.7 7 12 7 12Z"/><circle cx="12" cy="10" r="2.3"/></svg>`;
 I.copy=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+/* ---- extra charge-line icons ---- */
+I.train=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="13" rx="3"/><path d="M4 11h16"/><path d="M9.5 3v8M14.5 3v8"/><circle cx="8" cy="19" r="1.4"/><circle cx="16" cy="19" r="1.4"/><path d="m7 16-2.5 4M17 16l2.5 4"/></svg>`;
+I.warehouse=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21V10l9-6 9 6v11"/><path d="M3 21h18"/><rect x="9" y="13" width="6" height="8"/></svg>`;
+I.hazard=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>`;
+I.percent=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 5 5 19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>`;
+I.tag=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.6 12.1 12.9 4.3a2 2 0 0 0-1.4-.6H5a1 1 0 0 0-1 1v6.5c0 .5.2 1 .6 1.4l7.7 7.7a2 2 0 0 0 2.8 0l5.5-5.5a2 2 0 0 0 0-2.8Z"/><circle cx="8.5" cy="8.5" r="1.5"/></svg>`;
+I.snow=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M4.2 6.5l15.6 11M4.2 17.5l15.6-11"/><path d="m9 4 3-2 3 2M9 20l3 2 3-2M4.5 9.5 2 8.5l.5-3M4.5 14.5 2 15.5l.5 3M19.5 9.5 22 8.5l-.5-3M19.5 14.5 22 15.5l-.5 3"/></svg>`;
+I.factory=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 21V10l6 4v-4l6 4V7l6 4v10Z"/><path d="M2 21h20"/><path d="M6 21v-4M12 21v-4M18 21v-4"/></svg>`;
+I.calendar=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>`;
+I.wrench=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.6 5l-6.4 6.4a2 2 0 1 0 2.8 2.8l6.4-6.4a4 4 0 0 0 5-5.6l-2.6 2.6-2.8-2.8Z"/></svg>`;
 
 /* Replace placeholders in the HTML string with actual svg icons */
 document.addEventListener('DOMContentLoaded', function(){
@@ -1500,14 +1510,24 @@ document.addEventListener('mousedown', (e)=>{
 const ICON_KEYWORDS = [
   {icon:'plane',  words:['air freight','airfreight','air cargo','airline','flight','awb','airway bill','air charges','fuel surcharge','security surcharge','air export','air import']},
   {icon:'ship',   words:['ocean freight','sea freight','vessel','shipping line','ocean charges','seaway','sea export','sea import','bl fee','bill of lading']},
-  {icon:'container', words:['container','fcl','lcl','cfs','cbm charges','stuffing','destuffing']},
+  {icon:'train',  words:['rail freight','railway','rail charges','train charges']},
+  {icon:'container', words:['container','fcl','lcl','cfs charges','cbm charges','stuffing','destuffing']},
   {icon:'truck',  words:['transportation','transport charges','trucking','road freight','delivery charges','pickup charges','drayage','last mile','local transport']},
-  {icon:'secure', words:['customs','insurance','duty','clearance','security charges','inspection']},
-  {icon:'box',    words:['loading','unloading','handling','packing','palletization','crating','warehouse']},
+  {icon:'hazard', words:['dg charges','dangerous goods','hazardous','hazmat']},
+  {icon:'snow',   words:['reefer','cold chain','temperature control','frozen cargo']},
+  {icon:'secure', words:['customs','duty','clearance','security charges','inspection']},
+  {icon:'shield', words:['insurance','cargo insurance','marine insurance']},
+  {icon:'percent', words:['gst','vat charges','tax charges','igst','cgst','sgst']},
+  {icon:'warehouse', words:['warehouse','cfs storage','godown']},
+  {icon:'box',    words:['loading','unloading','handling','packing','palletization','crating']},
+  {icon:'tag',    words:['labeling','labelling','tagging charges']},
+  {icon:'factory', words:['origin charges','factory pickup','ex-factory','manufacturing']},
   {icon:'dollar', words:['bank charges','forex','exchange charges','finance charges','lc charges','remittance']},
   {icon:'weight', words:['weight charges','chargeable weight']},
+  {icon:'calendar', words:['appointment charges','scheduling charges']},
+  {icon:'wrench', words:['repair charges','maintenance charges','inspection repair']},
   {icon:'time',   words:['demurrage','detention','storage charges','delay charges']},
-  {icon:'globe',  words:['destination charges','origin charges','thc','terminal handling']},
+  {icon:'globe',  words:['destination charges','origin handling','thc','terminal handling']},
   {icon:'doc',    words:['documentation','document','manifest','do charges','paperwork','certificate','exwork']},
 ];
 function guessIconForDesc(text){
@@ -1527,10 +1547,14 @@ function updateRowIconDom(idx, iconKey){
 
 /* The picker grid — a curated set of icons relevant to freight charge lines. */
 const ICON_PICKER_LIST = [
-  {key:'plane', label:'Air / Flight'}, {key:'ship', label:'Ocean / Sea'}, {key:'container', label:'Container'},
-  {key:'truck', label:'Transport'}, {key:'secure', label:'Customs / Insurance'}, {key:'box', label:'Handling'},
-  {key:'doc', label:'Documentation'}, {key:'dollar', label:'Bank / Forex'}, {key:'weight', label:'Weight'},
-  {key:'time', label:'Demurrage / Storage'}, {key:'globe', label:'Terminal / THC'}, {key:'cargo', label:'General cargo'},
+  {key:'plane', label:'Air / Flight'}, {key:'ship', label:'Ocean / Sea'}, {key:'train', label:'Rail'},
+  {key:'container', label:'Container'}, {key:'truck', label:'Transport'}, {key:'hazard', label:'Dangerous goods'},
+  {key:'snow', label:'Reefer / Cold chain'}, {key:'secure', label:'Customs / Clearance'}, {key:'shield', label:'Insurance'},
+  {key:'percent', label:'GST / Tax'}, {key:'warehouse', label:'Warehouse / Storage'}, {key:'box', label:'Handling'},
+  {key:'tag', label:'Labeling'}, {key:'factory', label:'Origin / Factory'}, {key:'doc', label:'Documentation'},
+  {key:'dollar', label:'Bank / Forex'}, {key:'weight', label:'Weight'}, {key:'calendar', label:'Scheduling'},
+  {key:'wrench', label:'Repair / Maintenance'}, {key:'time', label:'Demurrage / Delay'}, {key:'globe', label:'Terminal / THC'},
+  {key:'cargo', label:'General cargo'},
 ];
 let iconPickerIdx = null;
 function openIconPicker(idx, anchorEl){
