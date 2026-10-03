@@ -927,7 +927,7 @@ document.addEventListener('DOMContentLoaded', function(){
     ICON_SHIELD:I.shield, ICON_THUMB:I.thumb, ICON_TIME:I.time, ICON_SECURE:I.secure, ICON_GLOBE:I.globe,
     ICON_CALC:I.calc, ICON_PLUS:I.plus, ICON_ARCHIVE:I.archive, ICON_ARCHIVE_X:I.x, ICON_LB_X:I.x, ICON_BIN:I.bin, ICON_TRACK:I.track, ICON_SEARCH:I.search, ICON_COPY:I.copy
   };
-  document.body.innerHTML = document.body.innerHTML.replace(/\$\{(ICON_[A-Z0-9]+)\}/g, (m,k)=> map[k] || '');
+  document.body.innerHTML = document.body.innerHTML.replace(/\$\{(ICON_[A-Z0-9_]+)\}/g, (m,k)=> map[k] || '');
   boot();
 });
 
@@ -2533,6 +2533,536 @@ document.addEventListener('DOMContentLoaded', ()=>{
     render();
   });
 })();
+</script>
+<script>
+/* ==========================================================================
+   ADD-ON: Charges Collection Fee (% of rows above / fixed),
+           Backup export & import, Quote status (Sent / Won / Lost)
+   Added by the quotation upgrade tool.
+   ========================================================================== */
+
+/* ---------- styles for the new features ---------- */
+(function(){
+  const css = `
+  .fee-toggle{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;flex:none;}
+  .fee-toggle button{border:none;background:#fff;font-size:11px;font-weight:800;padding:5px 8px;cursor:pointer;color:var(--muted);font-family:inherit;}
+  .fee-toggle button + button{border-left:1px solid var(--line);}
+  .fee-toggle button.on{background:var(--mode-c);color:#fff;}
+  .pct-wrap{display:flex;align-items:center;justify-content:flex-end;gap:4px;}
+  .pct-wrap .combo-input{width:64px;}
+  .pct-sign{font-weight:800;color:var(--ink);font-size:13px;}
+  .pct-note{font-size:11.5px;color:var(--muted);font-weight:700;white-space:nowrap;}
+  .static-cell{font-size:12.5px;font-weight:700;color:var(--ink);}
+
+  .ah-actions{display:flex;align-items:center;gap:8px;}
+  .ah-btn{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.35);color:#fff;border-radius:9px;
+    padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;font-family:inherit;}
+  .ah-btn:hover{background:rgba(255,255,255,.3);}
+  .ah-btn svg{width:14px;height:14px;}
+
+  .arc-filter{display:flex;gap:8px;padding:10px 26px;border-bottom:1px solid var(--line);background:#fff;flex-wrap:wrap;}
+  .af-btn{border:1.5px solid var(--line);background:#fff;border-radius:999px;padding:5px 13px;font-size:12px;font-weight:700;
+    color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:6px;font-family:inherit;}
+  .af-btn .n{font-size:10.5px;background:#eef2f8;border-radius:999px;padding:1px 7px;}
+  .af-btn.on{border-color:var(--mode-c);color:var(--navy);background:var(--mode-glow);}
+  .af-btn.sent.on{border-color:#2a6df5;} .af-btn.won.on{border-color:#1e9e5a;} .af-btn.lost.on{border-color:#d14343;}
+
+  .arc-status{display:flex;gap:5px;margin-top:8px;}
+  .st-btn{flex:1;border:1px solid var(--line);background:#fff;border-radius:999px;font-size:10.5px;font-weight:800;
+    padding:4px 0;cursor:pointer;color:var(--muted);font-family:inherit;}
+  .st-btn:hover{border-color:#b9c6dc;}
+  .st-btn.on.sent,.st-pill.sent{background:#2a6df5;border-color:#2a6df5;color:#fff;}
+  .st-btn.on.won,.st-pill.won{background:#1e9e5a;border-color:#1e9e5a;color:#fff;}
+  .st-btn.on.lost,.st-pill.lost{background:#d14343;border-color:#d14343;color:#fff;}
+  .st-pill{font-size:10.5px;font-weight:800;padding:3px 10px;border-radius:999px;border:1px solid;}
+
+  .pas-toast{position:fixed;left:50%;bottom:28px;transform:translate(-50%,20px);background:#152238;color:#fff;
+    padding:11px 18px;border-radius:10px;font-size:13px;font-weight:600;z-index:1500;opacity:0;pointer-events:none;
+    transition:opacity .2s ease, transform .2s ease;box-shadow:0 10px 30px rgba(0,0,0,.3);max-width:90vw;}
+  .pas-toast.show{opacity:1;transform:translate(-50%,0);}
+  `;
+  const st = document.createElement('style');
+  st.textContent = css;
+  document.head.appendChild(st);
+})();
+
+function pasToast(msg){
+  let t = document.getElementById('pasToast');
+  if(!t){ t = document.createElement('div'); t.id = 'pasToast'; t.className = 'pas-toast no-export'; document.body.appendChild(t); }
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._h);
+  t._h = setTimeout(()=> t.classList.remove('show'), 3500);
+}
+
+/* ==========================================================================
+   1. CHARGES COLLECTION FEE
+   - Only rows whose description contains "COLLECTION FEE" get the % / Fixed switch.
+   - % mode: percentage of the TOTAL INR of every row ABOVE it (in its current position).
+   - Fixed mode: works like any normal row (rate x qty x ROE).
+   ========================================================================== */
+function isCollectionFeeDesc(d){ return /collection\s*fee/i.test(d || ''); }
+function rowIsPct(r){ return !!r && isCollectionFeeDesc(r.desc) && r.feeMode !== 'fixed'; }
+
+function renderRows(){
+  const tbody = document.getElementById('rowsBody');
+  tbody.innerHTML = '';
+  store[currentMode].rows.forEach((r, idx)=>{
+    const tr = document.createElement('tr');
+    tr.draggable = true;
+    tr.dataset.idx = idx;
+    const descVal = r.desc || '';
+    const curVal = r.cur || '';
+    const unitVal = r.unitType || 'Unit';
+    const isFee = isCollectionFeeDesc(descVal);
+    const pct = rowIsPct(r);
+
+    const toggle = isFee ? `<span class="fee-toggle no-export" data-idx="${idx}">
+        <button type="button" data-mode="pct" class="${pct?'on':''}" title="Percentage of all rows above">%</button>
+        <button type="button" data-mode="fixed" class="${pct?'':'on'}" title="Enter a fixed amount">Fixed</button>
+      </span>` : '';
+
+    let curCell, rateCell, unitCell, roeCell;
+    if(pct){
+      curCell  = `<td class="cur-cell"><span class="static-cell">INR</span></td>`;
+      rateCell = `<td class="num"><div class="pct-wrap"><input class="combo-input" style="text-align:right" data-field="pct" data-idx="${idx}" value="${(r.pct!==undefined && r.pct!==null)?r.pct:''}" placeholder="0"><span class="pct-sign">%</span></div></td>`;
+      unitCell = `<td><span class="pct-note" data-idx="${idx}">of total above</span></td>`;
+      roeCell  = `<td class="num"><span class="static-cell">1</span></td>`;
+    } else {
+      curCell = `<td class="cur-cell">
+        <div class="combo-field${curVal?'':' empty'}" tabindex="0" data-combo="currency" data-field="cur" data-idx="${idx}" data-value="${escAttr(curVal)}">
+          <span class="cf-text">${escAttr(curVal) || COMBO_PLACEHOLDER.currency}</span><span class="cf-arrow">${I.chevron}</span>
+        </div></td>`;
+      rateCell = `<td class="num"><input class="combo-input" style="text-align:right" data-field="rate" data-idx="${idx}" value="${r.rate}"></td>`;
+      unitCell = `<td><div class="unit-cell">
+          <input class="combo-input qty-input" data-field="qty" data-idx="${idx}" value="${r.qty}">
+          <div class="combo-field type-field${unitVal?'':' empty'}" tabindex="0" data-combo="unit" data-field="unitType" data-idx="${idx}" data-value="${escAttr(unitVal)}">
+            <span class="cf-text">${escAttr(unitVal) || COMBO_PLACEHOLDER.unit}</span><span class="cf-arrow">${I.chevron}</span>
+          </div></div></td>`;
+      roeCell = `<td class="num"><input class="combo-input row-roe-input" style="text-align:right" data-field="roe" data-idx="${idx}" value="${r.roe!==undefined?r.roe:1}"></td>`;
+    }
+
+    tr.innerHTML = `
+      <td class="no-export"><span class="drag-handle" title="Drag to reorder">${I.drag}</span></td>
+      <td>
+        <div class="desc-cell"><button type="button" class="ic" data-idx="${idx}" title="Change icon">${I[r.icon]||I.doc}</button>
+          <div class="combo-field${descVal?'':' empty'}" tabindex="0" data-combo="charge" data-field="desc" data-idx="${idx}" data-value="${escAttr(descVal)}">
+            <span class="cf-text">${escAttr(descVal) || COMBO_PLACEHOLDER.charge}</span><span class="cf-arrow">${I.chevron}</span>
+          </div>
+          ${toggle}
+        </div>
+      </td>
+      ${curCell}${rateCell}${unitCell}
+      <td class="num row-total" data-idx="${idx}">-</td>
+      ${roeCell}
+      <td class="num row-totalinr" data-idx="${idx}">-</td>
+      <td class="no-export"><button class="row-del" onclick="delRow(${idx})">${I.trash}</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll('.ic[data-idx]').forEach(btn=>{
+    btn.addEventListener('click', ()=> openIconPicker(+btn.dataset.idx, btn));
+  });
+
+  tbody.querySelectorAll('.combo-input[data-field]').forEach(el=>{
+    el.addEventListener('input', ()=>{
+      const idx = +el.dataset.idx, field = el.dataset.field;
+      const row = store[currentMode].rows[idx];
+      row[field] = parseFloat(el.value.replace(/,/g,'')) || 0;
+      recalc();
+    });
+    el.addEventListener('keydown', (e)=>{
+      if(e.key==='Enter'){
+        e.preventDefault();
+        const idx = +el.dataset.idx, field = el.dataset.field;
+        el.blur();
+        focusNextRowField(idx, field);
+      }
+    });
+  });
+
+  tbody.querySelectorAll('.fee-toggle button').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const idx = +btn.closest('.fee-toggle').dataset.idx;
+      const row = store[currentMode].rows[idx];
+      if(!row) return;
+      row.feeMode = btn.dataset.mode;
+      if(row.feeMode === 'fixed'){
+        if(!row.cur) row.cur = 'INR';
+        if(!row.qty) row.qty = 1;
+        if(!row.unitType) row.unitType = 'Unit';
+        if(row.roe===undefined || row.roe===null || row.roe==='') syncRowRoeOnCurrencyChange(row);
+      }
+      renderRows();
+      recalc();
+      focusRowField(idx, row.feeMode === 'fixed' ? 'rate' : 'pct');
+    });
+  });
+
+  tbody.querySelectorAll('.combo-field[data-combo]').forEach(el=> attachComboField(el));
+
+  tbody.querySelectorAll('tr').forEach(tr=>{
+    tr.addEventListener('dragstart', (e)=>{
+      dragFromIdx = +tr.dataset.idx;
+      tr.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    tr.addEventListener('dragend', ()=>{ tr.classList.remove('dragging'); tbody.querySelectorAll('tr').forEach(x=>x.classList.remove('drag-over')); });
+    tr.addEventListener('dragover', (e)=>{ e.preventDefault(); tr.classList.add('drag-over'); });
+    tr.addEventListener('dragleave', ()=>{ tr.classList.remove('drag-over'); });
+    tr.addEventListener('drop', (e)=>{
+      e.preventDefault();
+      const toIdx = +tr.dataset.idx;
+      if(dragFromIdx===null || dragFromIdx===toIdx) return;
+      const rows = store[currentMode].rows;
+      const [moved] = rows.splice(dragFromIdx,1);
+      rows.splice(toIdx,0,moved);
+      dragFromIdx = null;
+      renderRows();
+      recalc();   // % rows recalculate from whatever is above them in the new order
+    });
+  });
+}
+
+/* Totals are worked out top-to-bottom, so a % row always uses exactly the rows above it. */
+function recalc(){
+  const data = store[currentMode];
+  let grand = 0;
+  data.rows.forEach((r, idx)=>{
+    let total, totalInr;
+    if(rowIsPct(r)){
+      const p = parseFloat(r.pct) || 0;
+      const base = grand;
+      totalInr = base * p / 100;
+      total = totalInr;
+      const note = document.querySelector(`.pct-note[data-idx="${idx}"]`);
+      if(note) note.textContent = 'of ' + fmtINR(base) + ' above';
+    } else {
+      total = (r.rate||0) * (r.qty||0);
+      totalInr = total * (parseFloat(r.roe) || 0);
+    }
+    grand += totalInr;
+    const totalCell = document.querySelector(`.row-total[data-idx="${idx}"]`);
+    const inrCell = document.querySelector(`.row-totalinr[data-idx="${idx}"]`);
+    if(totalCell) totalCell.textContent = total.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    if(inrCell) inrCell.textContent = totalInr.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+  });
+  document.getElementById('footTotal').textContent = fmtINR(grand);
+  const dispCur = getTotalDisplayCurrency();
+  const rate = getTotalRateFor(dispCur) || 1;
+  const converted = dispCur === 'INR' ? grand : grand / rate;
+  document.getElementById('totalStripVal').textContent = fmtCur(converted, dispCur);
+  saveDraftDebounced();
+}
+
+function focusNextRowField(idx, fieldName){
+  const rows = store[currentMode].rows;
+  const order = rowIsPct(rows[idx]) ? ['desc','pct'] : ['desc','cur','rate','qty','unitType'];
+  const pos = order.indexOf(fieldName);
+  if(pos>=0 && pos < order.length-1){
+    focusRowField(idx, order[pos+1]);
+  } else if(idx < rows.length-1){
+    focusRowField(idx+1, 'desc');
+  } else {
+    addRow();
+  }
+}
+
+function commitCombo(value){
+  if(!comboActiveField) return;
+  const field = comboActiveField;
+  const scope = field.dataset.scope || 'row';
+  const fieldName = field.dataset.field;
+  let refreshAllRows = false;
+  if(scope==='field'){
+    store[currentMode].fields[fieldName] = value;
+    if(fieldName==='currency' || fieldName==='currency2'){ syncAllRowRoe(); refreshAllRows = true; }
+  } else {
+    const idx = +field.dataset.idx;
+    const row = store[currentMode].rows[idx];
+    if(row){
+      const wasFee = isCollectionFeeDesc(row.desc);
+      row[fieldName] = value;
+      if(fieldName==='desc'){
+        const isFee = isCollectionFeeDesc(value);
+        if(isFee !== wasFee){
+          if(isFee) row.feeMode = 'pct';   // new collection fee rows start in % mode
+          refreshAllRows = true;
+        }
+        if(!row.iconManual){
+          const guessed = isFee ? 'percent' : guessIconForDesc(value);
+          if(guessed && guessed !== row.icon){ row.icon = guessed; updateRowIconDom(idx, guessed); }
+        }
+      }
+      if(fieldName==='cur'){
+        syncRowRoeOnCurrencyChange(row);
+        const roeInput = document.querySelector(`.row-roe-input[data-idx="${idx}"]`);
+        if(roeInput) roeInput.value = row.roe;
+      }
+    }
+  }
+  setComboDisplay(field, value);
+  if(refreshAllRows) renderRows();
+  recalc();
+  closeCombo();
+  if(scope==='field'){
+    focusNextField(field);
+  } else {
+    focusNextRowField(+field.dataset.idx, fieldName);
+  }
+}
+
+/* ==========================================================================
+   2. QUOTE STATUS (Sent / Won / Lost)
+   ========================================================================== */
+let archiveStatusFilter = 'all';
+const STATUS_LIST = ['Sent','Won','Lost'];
+function entryStatus(e){ return (e && e.status) || 'Sent'; }
+
+function archiveThisQuote(canvas, format){
+  try{
+    makeThumb(canvas, (thumb)=>{
+      try{
+        const data = store[currentMode];
+        const cfg = getCfg(currentMode);
+        const entry = {
+          id: 'q'+Date.now()+Math.random().toString(36).slice(2,7),
+          mode: currentMode,
+          modeLabel: cfg.label,
+          ref: data.fields.quoteRef || '',
+          customer: data.fields.customerName || '(no customer name)',
+          dateSaved: new Date().toISOString(),
+          formats: [format],
+          thumb: thumb,
+          snapshot: JSON.parse(JSON.stringify(data)),
+          status: 'Sent',
+          deleted: false,
+          deletedAt: null
+        };
+        const arr = loadArchive();
+        arr.unshift(entry);
+        saveArchive(arr);
+        renderArchiveButtonCount();
+      }catch(e){ console.warn('Could not save this quote to the archive:', e); }
+    });
+  }catch(e){ console.warn('Could not build archive thumbnail:', e); }
+}
+
+function setQuoteStatus(id, status){
+  const arr = loadArchive();
+  const entry = arr.find(e=>e.id===id);
+  if(!entry) return;
+  entry.status = status;
+  saveArchive(arr);
+  renderArchiveList();
+}
+
+function renderStatusFilter(all){
+  const bar = document.getElementById('arcFilter');
+  if(!bar) return;
+  if(archiveTab !== 'saved'){ bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  const saved = all.filter(e=>!e.deleted);
+  const counts = {all: saved.length};
+  STATUS_LIST.forEach(s=> counts[s] = saved.filter(e=>entryStatus(e)===s).length);
+  const btn = (key, label) => `<button type="button" class="af-btn ${key.toLowerCase()} ${archiveStatusFilter===key?'on':''}" data-f="${key}">${label} <span class="n">${counts[key]}</span></button>`;
+  bar.innerHTML = btn('all','All') + STATUS_LIST.map(s=>btn(s,s)).join('');
+  bar.querySelectorAll('.af-btn').forEach(b=>{
+    b.onclick = ()=>{ archiveStatusFilter = b.dataset.f; renderArchiveList(); };
+  });
+}
+
+function renderArchiveList(){
+  updateArchiveCounts();
+  const body = document.getElementById('archiveBody');
+  const all = loadArchive();
+  renderStatusFilter(all);
+  let list = all.filter(e => archiveTab==='bin' ? e.deleted : !e.deleted);
+  if(archiveTab==='saved' && archiveStatusFilter!=='all'){
+    list = list.filter(e => entryStatus(e) === archiveStatusFilter);
+  }
+  const q = (document.getElementById('archiveSearch')?.value || '').trim().toLowerCase();
+  if(q){
+    list = list.filter(e =>
+      (e.ref||'').toLowerCase().includes(q) ||
+      (e.customer||'').toLowerCase().includes(q)
+    );
+  }
+  if(!list.length){
+    let msg;
+    if(q) msg = 'No quotation matches "'+q+'". Check the reference number or customer name and try again.';
+    else if(archiveTab==='bin') msg = 'Bin is empty.';
+    else if(archiveStatusFilter!=='all') msg = 'No quotations marked "'+archiveStatusFilter+'" yet.';
+    else msg = 'No saved quotations yet. Download a PNG, PDF or ZIP and it will show up here automatically.';
+    body.innerHTML = `<div class="archive-empty">${I.archive}<div>${msg}</div></div>`;
+    return;
+  }
+  const grid = document.createElement('div');
+  grid.className = 'archive-grid';
+  list.forEach(entry=>{
+    const card = document.createElement('div');
+    card.className = 'arc-card' + (archiveTab==='bin' ? ' is-bin' : '');
+    const dt = new Date(entry.dateSaved);
+    const dateStr = dt.toLocaleDateString() + ' ' + dt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    const ribbonColor = MODE_COLORS[entry.mode] || 'var(--navy)';
+    const fmts = (entry.formats||[]).map(f=>`<span class="fmt-chip">${f}</span>`).join('');
+    const st = entryStatus(entry);
+    const statusHtml = archiveTab==='saved'
+      ? `<div class="arc-status">${STATUS_LIST.map(s=>`<button type="button" class="st-btn ${s.toLowerCase()} ${st===s?'on':''}" data-status="${s}">${s}</button>`).join('')}</div>`
+      : `<div class="arc-status"><span class="st-pill ${st.toLowerCase()}">${st}</span></div>`;
+    card.innerHTML = `
+      <div class="arc-thumb">
+        <img src="${entry.thumb}" alt="quote">
+        <span class="mode-ribbon" style="background:${ribbonColor}">${escAttr(entry.modeLabel)}</span>
+        <span class="fmt-badges">${fmts}</span>
+      </div>
+      <div class="arc-info">
+        <div class="a-ref">${escAttr(entry.ref || 'No Ref')}</div>
+        <div class="a-cust">${escAttr(entry.customer)}</div>
+        <div class="a-meta"><span>${dateStr}</span></div>
+        ${statusHtml}
+      </div>
+      <div class="arc-actions">
+        ${archiveTab==='saved' ? `
+          <button class="arc-btn" data-act="view">${I.eye} View</button>
+          <button class="arc-btn primary" data-act="edit">${I.pencil} Edit</button>
+          <button class="arc-btn" data-act="dup">${I.copy} Duplicate</button>
+          <button class="arc-btn danger" data-act="del">${I.bin} Delete</button>
+        ` : `
+          <button class="arc-btn" data-act="view">${I.eye} View</button>
+          <button class="arc-btn primary" data-act="restore">${I.restore} Restore</button>
+          <button class="arc-btn danger" data-act="purge" style="grid-column:1/3">${I.x} Delete forever</button>
+        `}
+      </div>
+    `;
+    card.querySelectorAll('[data-act]').forEach(btn=>{
+      btn.onclick = ()=>{
+        if(btn.dataset.act === 'dup'){ duplicateArchiveEntry(entry.id); return; }
+        archiveAction(entry.id, btn.dataset.act);
+      };
+    });
+    card.querySelectorAll('.st-btn').forEach(btn=>{
+      btn.onclick = ()=> setQuoteStatus(entry.id, btn.dataset.status);
+    });
+    grid.appendChild(card);
+  });
+  body.innerHTML = '';
+  body.appendChild(grid);
+}
+
+/* ==========================================================================
+   3. BACKUP: export everything to a .json file, import it back
+   ========================================================================== */
+function exportBackup(){
+  try{ saveDraftNow(); }catch(e){}
+  const archive = loadArchive();
+  const payload = {
+    app: 'quotation-builder-backup',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    archive: archive,
+    draft: { store: store, globalFields: globalFields, currentMode: currentMode }
+  };
+  const blob = new Blob([JSON.stringify(payload)], {type:'application/json'});
+  const d = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  const name = `Quotation_Backup_${pad(d.getDate())}-${pad(d.getMonth()+1)}-${d.getFullYear()}.json`;
+  const a = document.createElement('a');
+  a.download = name;
+  a.href = URL.createObjectURL(blob);
+  a.click();
+  setTimeout(()=> URL.revokeObjectURL(a.href), 4000);
+  pasToast('Backup downloaded: ' + archive.length + ' quotation(s) saved in ' + name);
+}
+
+function applyBackupDraft(draft){
+  if(!draft || !draft.store) return;
+  if(draft.globalFields) Object.assign(globalFields, draft.globalFields);
+  MODES.forEach(m=>{
+    const s = draft.store[m.key];
+    if(s && s.fields && s.rows) store[m.key] = s;
+  });
+  if(draft.currentMode && MODES.some(m=>m.key===draft.currentMode)) currentMode = draft.currentMode;
+  document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.key===currentMode));
+  renderGlobalFields();
+  renderMode(currentMode);
+  saveDraftNow();
+  pasToast('Working quotations loaded from backup.');
+}
+
+function importBackupFile(file){
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    let data;
+    try{ data = JSON.parse(reader.result); }
+    catch(e){ pasToast('This file is not a valid backup. Choose the .json file made by "Export backup".'); return; }
+    const incoming = Array.isArray(data && data.archive) ? data.archive : (Array.isArray(data) ? data : null);
+    if(!incoming){ pasToast('No quotations found in this file. Choose the .json file made by "Export backup".'); return; }
+
+    const arr = loadArchive();
+    const ids = new Set(arr.map(e=>e.id));
+    let added = 0;
+    incoming.forEach(e=>{
+      if(e && e.id && e.snapshot && !ids.has(e.id)){
+        arr.push(e);
+        ids.add(e.id);
+        added++;
+      }
+    });
+    arr.sort((a,b)=> new Date(b.dateSaved) - new Date(a.dateSaved));
+    saveArchive(arr);
+    renderArchiveList();
+    renderArchiveButtonCount();
+
+    const skipped = incoming.length - added;
+    const msg = 'Imported ' + added + ' quotation(s)' + (skipped ? ', skipped ' + skipped + ' already saved' : '');
+    if(data.draft && data.draft.store){
+      showConfirm(msg + '. Also load the working (unsaved) quotations from this backup into the tabs? This replaces what is open in the tabs now.', ()=> applyBackupDraft(data.draft));
+    } else {
+      pasToast(msg + '.');
+    }
+  };
+  reader.onerror = ()=> pasToast('Could not read this file. Try again.');
+  reader.readAsText(file);
+}
+
+/* ---------- add the new buttons/filter bar to the Archive window ---------- */
+document.addEventListener('DOMContentLoaded', ()=>{
+  const head = document.querySelector('.archive-head');
+  const closeBtn = head && head.querySelector('.archive-close');
+  if(head && closeBtn && !document.getElementById('btnExportBackup')){
+    const wrap = document.createElement('div');
+    wrap.className = 'ah-actions';
+    wrap.innerHTML = `
+      <button type="button" class="ah-btn" id="btnExportBackup" title="Save all quotations to a file">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+        Export backup
+      </button>
+      <button type="button" class="ah-btn" id="btnImportBackup" title="Restore quotations from a backup file">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21V9"/><path d="m7 14 5-5 5 5"/><path d="M5 3h14"/></svg>
+        Import backup
+      </button>
+      <input type="file" id="importBackupInput" accept=".json,application/json" hidden>
+    `;
+    head.insertBefore(wrap, closeBtn);
+    wrap.appendChild(closeBtn);
+
+    const input = document.getElementById('importBackupInput');
+    document.getElementById('btnExportBackup').onclick = exportBackup;
+    document.getElementById('btnImportBackup').onclick = ()=>{ input.value = ''; input.click(); };
+    input.onchange = ()=>{ if(input.files && input.files[0]) importBackupFile(input.files[0]); };
+  }
+
+  const searchWrap = document.querySelector('.archive-search-wrap');
+  if(searchWrap && !document.getElementById('arcFilter')){
+    const bar = document.createElement('div');
+    bar.className = 'arc-filter';
+    bar.id = 'arcFilter';
+    searchWrap.insertAdjacentElement('afterend', bar);
+  }
+});
+
 </script>
 </body>
 </html>
