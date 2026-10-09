@@ -3070,17 +3070,9 @@ document.addEventListener('DOMContentLoaded', ()=>{
    PAS Freight DSR automatically (stage "Nomination"), details pre-filled.
    ========================================================================== */
 const DSR_URL = 'https://pas-freight-api.onrender.com';
-// The secret key is NOT stored in this file (this page is public on Vercel).
-// Staff enter it once on their own computer; the browser remembers it.
-let DSR_KEY = '';
-try{ DSR_KEY = localStorage.getItem('pas_dsr_key') || ''; }catch(e){}
-function ensureKey(){
-  if(DSR_KEY) return DSR_KEY;
-  const k = (window.prompt('Enter the DSR key (ask Eshwar). You only need to do this once on this computer.') || '').trim();
-  if(k){ DSR_KEY = k; try{ localStorage.setItem('pas_dsr_key', k); }catch(e){} }
-  return DSR_KEY;
-}
-function forgetKey(){ DSR_KEY = ''; try{ localStorage.removeItem('pas_dsr_key'); }catch(e){} }
+// No secret key in this page: requests go to this site's own /api/dsr, which adds the key on the server.
+function ensureKey(){ return true; }
+function forgetKey(){}
 
 (function(){
   const css = `
@@ -3181,10 +3173,9 @@ function forgetKey(){ DSR_KEY = ''; try{ localStorage.removeItem('pas_dsr_key');
     if(!p.createdByEmail){ showErr('Please enter your PAS email.'); return; }
     $('dsrYes').disabled = true; $('dsrYes').textContent = 'Sending…';
     try{
-      const r = await fetch(DSR_URL + '/api/integrations/quotation/nominated', {
-        method:'POST', headers:{'Content-Type':'application/json','x-api-key':DSR_KEY}, body: JSON.stringify(p)
-      });
-      const j = await r.json();
+      const r = await fetch('/api/dsr', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({path:'/quotation/nominated', method:'POST', payload:p})});
+      const j = await r.json().catch(()=>({}));
       if(!r.ok) throw new Error(j.message || 'DSR error');
       mem.set('prefix', p.prefix); mem.set('ini', p.initials); mem.set('mail', p.createdByEmail); mem.set('dir', p.importExport);
       const arr = loadArchive(); const e = arr.find(x=>x.id===pending.id);
@@ -3229,10 +3220,15 @@ function forgetKey(){ DSR_KEY = ''; try{ localStorage.removeItem('pas_dsr_key');
   const key = ()=> !!ensureKey();
 
   async function dsr(path, opts){
-    if(!key()) throw new Error('DSR key is needed. Ask Eshwar for it.');
-    const r = await fetch(DSR_URL + '/api/integrations' + path, Object.assign({headers:{'Content-Type':'application/json','x-api-key':DSR_KEY}}, opts||{}));
+    const o = opts || {};
+    const method = (o.method || 'GET').toUpperCase();
+    let r;
+    try{
+      r = await fetch('/api/dsr', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({path, method, payload: o.body ? JSON.parse(o.body) : undefined})});
+    }catch(err){ throw new Error('Failed to fetch'); }
     const j = await r.json().catch(()=>({}));
-    if(r.status===401){ forgetKey(); throw new Error('The DSR key is wrong. Try again and enter the correct key.'); }
+    if(r.status===404 && !j.message) throw new Error('Open the quotation from its Vercel link (not from a file on the computer).');
     if(!r.ok) throw new Error(j.message || 'DSR error');
     return j;
   }
