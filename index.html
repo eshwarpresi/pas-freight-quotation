@@ -3306,6 +3306,7 @@ function forgetKey(){}
     if(currentMode !== 'domestic') set('cbm', d.cbm);
     F.quoteRef = d.refNo;           // one number all the way: DSR reference = quotation reference
     data.dsrRef = d.refNo;          // remembers the link (saved with the quotation)
+    data.dsrLoaded = d;             // what the DSR had at that moment (to spot what you change here)
     renderMode(currentMode);
     try{ saveDraftNow(); }catch(e){}
   }
@@ -3319,6 +3320,44 @@ function forgetKey(){}
     if(ev.target && ev.target.id==='dsrLoadRef' && ev.key==='Enter'){ ev.preventDefault(); doLoad(); }
   });
 
+  /* ---------- compare what was typed in the quotation with what the DSR had ---------- */
+  const LABEL = {fromLocation:'From', toLocation:'To', terms:'Terms', commodityName:'Commodity', noOfPackages:'Packages', grossWeight:'Gross weight', weight:'Chargeable weight', cbm:'CBM'};
+  const numOf = (v)=>{ const x = parseFloat(String(v==null?'':v).replace(/,/g,'')); return isFinite(x) ? x : null; };
+  const txt = (v)=>{ const x = String(v==null?'':v).trim(); return (!x || /^[—–\-]+$/.test(x) || /^NA$/i.test(x)) ? '' : x; };
+  function quoteValues(e){
+    const f = (e.snapshot && e.snapshot.fields) || {};
+    const dom = e.snapshot && e.mode === 'domestic';
+    return {
+      fromLocation: txt(f.origin), toLocation: txt(f.destination), terms: txt(f.incoterm).toUpperCase(),
+      commodityName: txt(f.cargoType), noOfPackages: numOf(f.packages), grossWeight: numOf(f.grossWeight),
+      weight: numOf(f.chWeight), cbm: dom ? null : numOf(f.cbm)
+    };
+  }
+  function diffWithDsr(e){
+    const q = quoteValues(e), d = (e.snapshot && e.snapshot.dsrLoaded) || {};
+    const fill = {}, changed = {};
+    Object.keys(LABEL).forEach(k=>{
+      const qv = q[k]; if(qv===null || qv==='' || qv===undefined) return;
+      const dv = d[k];
+      const empty = dv===null || dv===undefined || dv==='';
+      if(empty){ fill[k] = qv; return; }
+      const same = (typeof qv==='number') ? Number(dv)===qv : String(dv).trim().toUpperCase()===String(qv).trim().toUpperCase();
+      if(!same) changed[k] = {from:dv, to:qv};
+    });
+    return {fill, changed};
+  }
+  function askOverwrite(e, changed){
+    const keys = Object.keys(changed);
+    if(!keys.length) return;
+    const list = keys.map(k=> LABEL[k] + ': ' + changed[k].from + ' → ' + changed[k].to).join('  •  ');
+    showConfirm('You changed details that are already in the DSR (' + list + '). Update the DSR with the quotation values?', ()=>{
+      const send = {}; keys.forEach(k=> send[k] = changed[k].to);
+      dsr('/shipment/' + encodeURIComponent(e.snapshot.dsrRef) + '/stage', {method:'POST', body: JSON.stringify({quoteNo:e.ref, updates:send, overwrite:true})})
+        .then(()=> pasToast('DSR details updated from the quotation.'))
+        .catch((err)=> pasToast('Could not update DSR details: ' + friendly(err)));
+    });
+  }
+
   /* ---------- tell the DSR when a linked quotation is saved ("Quoted") ---------- */
   const baseSave = saveArchive;
   window.saveArchive = saveArchive = function(arr){
@@ -3331,8 +3370,14 @@ function forgetKey(){}
     }catch(e){}
     baseSave(arr);
     todo.forEach(e=>{
-      dsr('/shipment/' + encodeURIComponent(e.snapshot.dsrRef) + '/stage', {method:'POST', body: JSON.stringify({stage:'Quoted', quoteNo:e.ref})})
-        .then(()=> pasToast('DSR updated: ' + e.snapshot.dsrRef + ' → Quoted'))
+      const ref = e.snapshot.dsrRef;
+      const { fill, changed } = diffWithDsr(e);
+      dsr('/shipment/' + encodeURIComponent(ref) + '/stage', {method:'POST', body: JSON.stringify({stage:'Quoted', quoteNo:e.ref, updates:fill})})
+        .then((j)=>{
+          const n = (j.data.applied||[]).length;
+          pasToast('DSR updated: ' + ref + ' → Quoted' + (n ? ' · ' + n + ' detail(s) filled in' : ''));
+          askOverwrite(e, changed);
+        })
         .catch(()=>{ // not delivered: allow another try next time it is saved
           const a = loadArchive(); const x = a.find(q=>q.id===e.id);
           if(x){ x.dsrQuoted = false; baseSave(a); }
