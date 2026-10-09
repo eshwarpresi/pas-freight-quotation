@@ -3310,8 +3310,8 @@ function forgetKey(){}
     try{ saveDraftNow(); }catch(e){}
   }
 
-  fab.addEventListener('click', openLoad);
   document.addEventListener('click', (ev)=>{
+    if(ev.target.closest && ev.target.closest('#dsrFab')){ openLoad(); return; }
     if(ev.target.id==='dsrLoadNo' || ev.target.id==='dsrLoadOv') closeLoad();
     if(ev.target.id==='dsrLoadGo') doLoad();
   });
