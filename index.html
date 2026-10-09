@@ -3064,5 +3064,307 @@ document.addEventListener('DOMContentLoaded', ()=>{
 });
 
 </script>
+<script>
+/* ==========================================================================
+   DSR CONNECT — when a quotation is marked WON, create the shipment in the
+   PAS Freight DSR automatically (stage "Nomination"), details pre-filled.
+   ========================================================================== */
+const DSR_URL = 'https://pas-freight-api.onrender.com';
+// The secret key is NOT stored in this file (this page is public on Vercel).
+// Staff enter it once on their own computer; the browser remembers it.
+let DSR_KEY = '';
+try{ DSR_KEY = localStorage.getItem('pas_dsr_key') || ''; }catch(e){}
+function ensureKey(){
+  if(DSR_KEY) return DSR_KEY;
+  const k = (window.prompt('Enter the DSR key (ask Eshwar). You only need to do this once on this computer.') || '').trim();
+  if(k){ DSR_KEY = k; try{ localStorage.setItem('pas_dsr_key', k); }catch(e){} }
+  return DSR_KEY;
+}
+function forgetKey(){ DSR_KEY = ''; try{ localStorage.removeItem('pas_dsr_key'); }catch(e){} }
+
+(function(){
+  const css = `
+  .dsr-ov{position:fixed;inset:0;background:rgba(11,20,38,.6);z-index:1300;display:none;align-items:center;justify-content:center;padding:20px;}
+  .dsr-ov.open{display:flex;}
+  .dsr-box{background:#fff;border-radius:16px;max-width:440px;width:100%;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.35);font-family:inherit;}
+  .dsr-box h3{margin:0 0 4px;font-size:18px;color:#0b2a5b;}
+  .dsr-box p{margin:0 0 14px;font-size:13px;color:#64748b;line-height:1.5;}
+  .dsr-box label{display:block;font-size:12px;font-weight:700;color:#334155;margin:10px 0 4px;}
+  .dsr-box input,.dsr-box select{width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;box-sizing:border-box;}
+  .dsr-row{display:flex;gap:10px;}.dsr-row>div{flex:1;}
+  .dsr-act{display:flex;gap:10px;justify-content:flex-end;margin-top:18px;}
+  .dsr-act button{border:none;border-radius:9px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;}
+  .dsr-act .no{background:#f0f3f9;color:#0b2a5b;}.dsr-act .yes{background:#16a34a;color:#fff;}
+  .dsr-act button:disabled{opacity:.6;cursor:wait;}
+  .dsr-err{color:#b91c1c;font-size:13px;margin-top:10px;display:none;}
+  `;
+  const st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);
+
+  const ov = document.createElement('div');
+  ov.className = 'dsr-ov no-export'; ov.id = 'dsrOverlay';
+  ov.innerHTML = `
+    <div class="dsr-box">
+      <h3>Send to DSR ✔</h3>
+      <p id="dsrSub">The customer nominated. This creates the shipment in the DSR with all details filled in.</p>
+      <label>Shipment type</label>
+      <select id="dsrDir"><option value="Import">Import</option><option value="Export">Export</option></select>
+      <div class="dsr-row">
+        <div><label>Reference prefix</label><input id="dsrPrefix" placeholder="e.g. PPI" autocapitalize="characters"></div>
+        <div><label>Your initials</label><input id="dsrIni" placeholder="e.g. RS" autocapitalize="characters"></div>
+      </div>
+      <label>Your PAS email (becomes the shipment owner)</label>
+      <input id="dsrMail" type="email" placeholder="name@pasfreight.com">
+      <label>Customer email for status updates (optional)</label>
+      <input id="dsrCust" type="email" placeholder="customer@company.com">
+      <div class="dsr-err" id="dsrErr"></div>
+      <div class="dsr-act">
+        <button class="no" id="dsrNo" type="button">Not now</button>
+        <button class="yes" id="dsrYes" type="button">Create in DSR</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+
+  const $ = (id)=>document.getElementById(id);
+  const mem = {
+    get(k){ try{ return localStorage.getItem('pas_dsr_'+k)||''; }catch(e){ return ''; } },
+    set(k,v){ try{ localStorage.setItem('pas_dsr_'+k, v); }catch(e){} }
+  };
+  const clean = (v)=>{ const x = String(v==null?'':v).trim(); return (!x || /^[—\-–NA]+$/i.test(x)) ? '' : x; };
+  const num = (v)=>{ const x = parseFloat(String(v==null?'':v).replace(/,/g,'')); return isFinite(x) ? x : ''; };
+  const TYPE = {sea_fcl:'Sea FCL', sea_lcl:'Sea LCL', air:'Air', domestic:'Transport'};
+
+  let pending = null;
+  function closeDsr(){ $('dsrOverlay').classList.remove('open'); pending = null; }
+
+  function openDsr(entry){
+    pending = entry;
+    $('dsrErr').style.display = 'none';
+    $('dsrYes').disabled = false; $('dsrYes').textContent = 'Create in DSR';
+    $('dsrSub').textContent = 'Quotation ' + (entry.ref||'') + ' · ' + (entry.customer||'') + ' — the customer nominated. This creates the shipment in the DSR with all details filled in.';
+    $('dsrPrefix').value = mem.get('prefix'); $('dsrIni').value = mem.get('ini'); $('dsrMail').value = mem.get('mail');
+    $('dsrDir').value = mem.get('dir') || 'Import'; $('dsrCust').value = '';
+    $('dsrOverlay').classList.add('open');
+  }
+
+  function buildPayload(entry){
+    const f = (entry.snapshot && entry.snapshot.fields) || {};
+    const dir = $('dsrDir').value;
+    const customer = clean(f.customerName), other = clean(f.supplierName);
+    return {
+      quoteNo: entry.ref || entry.id,
+      customerName: customer,
+      // Import: customer is the consignee, supplier is the shipper. Export: the other way round.
+      consigneeName: dir === 'Import' ? customer : other,
+      shipperName:   dir === 'Import' ? other : customer,
+      shipmentType: TYPE[entry.mode] || entry.modeLabel,
+      importExport: dir,
+      fromLocation: clean(f.origin),
+      toLocation: clean(f.destination),
+      terms: clean(f.incoterm),
+      commodityName: clean(f.cargoType),
+      noOfPackages: num(f.packages),
+      grossWeight: num(f.grossWeight),
+      weight: num(f.chWeight),
+      cbm: entry.mode === 'domestic' ? '' : num(f.cbm),
+      notificationEmail: $('dsrCust').value.trim(),
+      createdByEmail: $('dsrMail').value.trim(),
+      prefix: $('dsrPrefix').value.trim(),
+      initials: $('dsrIni').value.trim(),
+      remarks: 'Transit ' + (clean(f.transitTime) || '-')
+    };
+  }
+
+  async function submitDsr(){
+    if(!pending) return;
+    if(!ensureKey()){ showErr('DSR key is needed. Ask Eshwar for it.'); return; }
+    const p = buildPayload(pending);
+    if(!p.createdByEmail){ showErr('Please enter your PAS email.'); return; }
+    $('dsrYes').disabled = true; $('dsrYes').textContent = 'Sending…';
+    try{
+      const r = await fetch(DSR_URL + '/api/integrations/quotation/nominated', {
+        method:'POST', headers:{'Content-Type':'application/json','x-api-key':DSR_KEY}, body: JSON.stringify(p)
+      });
+      const j = await r.json();
+      if(!r.ok) throw new Error(j.message || 'DSR error');
+      mem.set('prefix', p.prefix); mem.set('ini', p.initials); mem.set('mail', p.createdByEmail); mem.set('dir', p.importExport);
+      const arr = loadArchive(); const e = arr.find(x=>x.id===pending.id);
+      if(e){ e.dsrRef = j.data.refNo; saveArchive(arr); }
+      closeDsr();
+      pasToast((j.duplicate ? 'Already in DSR: ' : 'Sent to DSR ✔  Ref: ') + j.data.refNo);
+      renderArchiveList();
+    }catch(err){
+      showErr(err.message === 'Failed to fetch' ? 'DSR server is waking up. Please try again in 20 seconds.' : err.message);
+      $('dsrYes').disabled = false; $('dsrYes').textContent = 'Try again';
+    }
+  }
+  function showErr(m){ const e = $('dsrErr'); e.textContent = m; e.style.display = 'block'; }
+
+  document.addEventListener('click', (ev)=>{
+    if(ev.target.id === 'dsrNo' || ev.target.id === 'dsrOverlay') closeDsr();
+    if(ev.target.id === 'dsrYes') submitDsr();
+  });
+
+  // Wrap the existing status setter: same behaviour, plus the DSR step when set to Won
+  const baseSet = setQuoteStatus;
+  window.setQuoteStatus = setQuoteStatus = function(id, status){
+    baseSet(id, status);
+    if(status !== 'Won') return;
+    const entry = loadArchive().find(e=>e.id===id);
+    if(!entry) return;
+    if(entry.dsrRef){ pasToast('Already in DSR: ' + entry.dsrRef); return; }
+    openDsr(entry);
+  };
+})();
+
+/* ==========================================================================
+   DSR LINK (normal flow):  Enquiry → shipment created in DSR → QUOTATION → NOMINATION
+   1) "Load from DSR": type the DSR reference → customer, route, weights, terms fill in here.
+   2) When the quotation is saved → DSR stage becomes "Quoted".
+   3) When you mark it Won      → DSR stage becomes "Nomination" (same shipment, no new one).
+   ========================================================================== */
+(function(){
+  const $ = (id)=>document.getElementById(id);
+  const MODE_OF = {'sea fcl':'sea_fcl','sea lcl':'sea_lcl','air':'air','transport':'domestic'};
+  const up = (v)=> (v==null? '' : String(v));
+  const key = ()=> !!ensureKey();
+
+  async function dsr(path, opts){
+    if(!key()) throw new Error('DSR key is needed. Ask Eshwar for it.');
+    const r = await fetch(DSR_URL + '/api/integrations' + path, Object.assign({headers:{'Content-Type':'application/json','x-api-key':DSR_KEY}}, opts||{}));
+    const j = await r.json().catch(()=>({}));
+    if(r.status===401){ forgetKey(); throw new Error('The DSR key is wrong. Try again and enter the correct key.'); }
+    if(!r.ok) throw new Error(j.message || 'DSR error');
+    return j;
+  }
+  const friendly = (e)=> e.message==='Failed to fetch' ? 'DSR server is waking up. Please try again in 20 seconds.' : e.message;
+
+  /* ---------- floating "Load from DSR" button + small dialog ---------- */
+  const st = document.createElement('style');
+  st.textContent = `
+    .dsr-fab{position:fixed;left:18px;bottom:18px;z-index:1250;background:linear-gradient(135deg,#0b2a5b,#1d6fe8);color:#fff;border:none;border-radius:999px;padding:12px 18px;font-weight:700;font-size:13px;cursor:pointer;box-shadow:0 8px 24px rgba(11,42,91,.35);}
+    .dsr-fab:hover{filter:brightness(1.1);}
+  `;
+  document.head.appendChild(st);
+  const fab = document.createElement('button');
+  fab.className = 'dsr-fab no-export'; fab.id = 'dsrFab'; fab.type = 'button'; fab.textContent = '📥 Load from DSR';
+  document.body.appendChild(fab);
+
+  const dlg = document.createElement('div');
+  dlg.className = 'dsr-ov no-export'; dlg.id = 'dsrLoadOv';
+  dlg.innerHTML = `
+    <div class="dsr-box">
+      <h3>Load from DSR</h3>
+      <p>Type the shipment reference created in the DSR. The details fill into this quotation.</p>
+      <label>DSR reference number</label>
+      <input id="dsrLoadRef" placeholder="e.g. PPI260506-RS" autocapitalize="characters">
+      <div class="dsr-err" id="dsrLoadErr"></div>
+      <div class="dsr-act">
+        <button class="no" id="dsrLoadNo" type="button">Cancel</button>
+        <button class="yes" id="dsrLoadGo" type="button">Load details</button>
+      </div>
+    </div>`;
+  document.body.appendChild(dlg);
+
+  const openLoad = ()=>{ $('dsrLoadErr').style.display='none'; $('dsrLoadGo').disabled=false; $('dsrLoadGo').textContent='Load details'; $('dsrLoadOv').classList.add('open'); setTimeout(()=>$('dsrLoadRef').focus(),50); };
+  const closeLoad = ()=> $('dsrLoadOv').classList.remove('open');
+  const loadErr = (m)=>{ const e=$('dsrLoadErr'); e.textContent=m; e.style.display='block'; };
+
+  async function doLoad(){
+    const ref = $('dsrLoadRef').value.trim();
+    if(ref.length < 5){ loadErr('Please type the full reference number.'); return; }
+    $('dsrLoadGo').disabled = true; $('dsrLoadGo').textContent = 'Loading…';
+    try{
+      const j = await dsr('/shipment/' + encodeURIComponent(ref));
+      applyShipment(j.data);
+      closeLoad();
+      pasToast('Loaded from DSR: ' + j.data.refNo);
+    }catch(e){
+      loadErr(friendly(e));
+      $('dsrLoadGo').disabled = false; $('dsrLoadGo').textContent = 'Try again';
+    }
+  }
+
+  function applyShipment(d){
+    // pick the matching tab (Air / Sea FCL / Sea LCL / Transport); otherwise stay on the current one
+    const k = MODE_OF[String(d.shipmentType||'').trim().toLowerCase()];
+    saveCurrentFieldsToStore();
+    if(k && k !== currentMode){
+      currentMode = k;
+      document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.key===k));
+    }
+    const data = store[currentMode];
+    const isExport = String(d.importExport||'').toLowerCase()==='export';
+    const customer = d.customerName || (isExport ? d.shipperName : d.consigneeName) || '';
+    const other = isExport ? d.consigneeName : d.shipperName;
+    const F = data.fields;
+    const set = (name, val)=>{ if(val!==null && val!==undefined && String(val).trim()!=='') F[name] = String(val); };
+    set('customerName', customer);
+    set('supplierName', other);
+    set('origin', d.fromLocation);
+    set('destination', d.toLocation);
+    set('incoterm', up(d.terms).toUpperCase());
+    set('cargoType', d.commodityName);
+    set('packages', d.noOfPackages);
+    set('grossWeight', d.grossWeight);
+    set('chWeight', d.weight);
+    if(currentMode !== 'domestic') set('cbm', d.cbm);
+    F.quoteRef = d.refNo;           // one number all the way: DSR reference = quotation reference
+    data.dsrRef = d.refNo;          // remembers the link (saved with the quotation)
+    renderMode(currentMode);
+    try{ saveDraftNow(); }catch(e){}
+  }
+
+  fab.addEventListener('click', openLoad);
+  document.addEventListener('click', (ev)=>{
+    if(ev.target.id==='dsrLoadNo' || ev.target.id==='dsrLoadOv') closeLoad();
+    if(ev.target.id==='dsrLoadGo') doLoad();
+  });
+  document.addEventListener('keydown', (ev)=>{
+    if(ev.target && ev.target.id==='dsrLoadRef' && ev.key==='Enter'){ ev.preventDefault(); doLoad(); }
+  });
+
+  /* ---------- tell the DSR when a linked quotation is saved ("Quoted") ---------- */
+  const baseSave = saveArchive;
+  window.saveArchive = saveArchive = function(arr){
+    const todo = [];
+    try{
+      (arr||[]).forEach(e=>{
+        const ref = e && !e.deleted && e.snapshot && e.snapshot.dsrRef;
+        if(ref && !e.dsrQuoted){ e.dsrQuoted = true; todo.push(e); }
+      });
+    }catch(e){}
+    baseSave(arr);
+    todo.forEach(e=>{
+      dsr('/shipment/' + encodeURIComponent(e.snapshot.dsrRef) + '/stage', {method:'POST', body: JSON.stringify({stage:'Quoted', quoteNo:e.ref})})
+        .then(()=> pasToast('DSR updated: ' + e.snapshot.dsrRef + ' → Quoted'))
+        .catch(()=>{ // not delivered: allow another try next time it is saved
+          const a = loadArchive(); const x = a.find(q=>q.id===e.id);
+          if(x){ x.dsrQuoted = false; baseSave(a); }
+        });
+    });
+  };
+
+  /* ---------- Won: linked quotation → "Nomination" on the SAME DSR shipment ---------- */
+  const prevSet = setQuoteStatus;   // (the version that opens the create-new dialog when not linked)
+  window.setQuoteStatus = setQuoteStatus = function(id, status){
+    if(status !== 'Won'){ prevSet(id, status); return; }
+    const entry = loadArchive().find(e=>e.id===id);
+    const ref = entry && entry.snapshot && entry.snapshot.dsrRef;
+    if(!ref){ prevSet(id, status); return; }          // not linked → old behaviour (create new in DSR)
+    // linked: mark Won, then move the existing shipment to Nomination
+    const arr = loadArchive(); const e2 = arr.find(x=>x.id===id);
+    if(e2){ e2.status = 'Won'; baseSave(arr); renderArchiveList(); }
+    if(entry.dsrNominated){ pasToast('Already nominated in DSR: ' + ref); return; }
+    dsr('/shipment/' + encodeURIComponent(ref) + '/stage', {method:'POST', body: JSON.stringify({stage:'Nomination', quoteNo:entry.ref})})
+      .then((j)=>{
+        const a = loadArchive(); const x = a.find(q=>q.id===id);
+        if(x){ x.dsrNominated = true; x.dsrRef = ref; baseSave(a); }
+        pasToast('DSR updated: ' + ref + (j.data.moved ? ' → Nomination' : ' (stage already ahead, history noted)'));
+      })
+      .catch((err)=> pasToast('Could not update DSR: ' + friendly(err) + ' — click Won again to retry'));
+  };
+})();
+</script>
+
 </body>
 </html>
