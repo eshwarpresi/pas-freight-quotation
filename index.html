@@ -3365,7 +3365,7 @@ function forgetKey(){}
     try{
       (arr||[]).forEach(e=>{
         const ref = e && !e.deleted && e.snapshot && e.snapshot.dsrRef;
-        if(ref && !e.dsrQuoted){ e.dsrQuoted = true; todo.push(e); }
+        if(ref && !e.dsrQuoted && !e.dsrLost){ e.dsrQuoted = true; todo.push(e); }
       });
     }catch(e){}
     baseSave(arr);
@@ -3378,9 +3378,10 @@ function forgetKey(){}
           pasToast('DSR updated: ' + ref + ' → Quoted' + (n ? ' · ' + n + ' detail(s) filled in' : ''));
           askOverwrite(e, changed);
         })
-        .catch(()=>{ // not delivered: allow another try next time it is saved
+        .catch((err)=>{ // not delivered: allow another try next time it is saved
           const a = loadArchive(); const x = a.find(q=>q.id===e.id);
           if(x){ x.dsrQuoted = false; baseSave(a); }
+          pasToast('DSR NOT updated for ' + ref + ': ' + friendly(err));
         });
     });
   };
@@ -3388,6 +3389,38 @@ function forgetKey(){}
   /* ---------- Won: linked quotation → "Nomination" on the SAME DSR shipment ---------- */
   const prevSet = setQuoteStatus;   // (the version that opens the create-new dialog when not linked)
   window.setQuoteStatus = setQuoteStatus = function(id, status){
+    const entry0 = loadArchive().find(e=>e.id===id);
+    const ref0 = entry0 && entry0.snapshot && entry0.snapshot.dsrRef;
+
+    /* ---------- Lost: linked quotation → cancel the shipment in the DSR (after a confirm) ---------- */
+    if(status === 'Lost' && ref0){
+      showConfirm('Mark this quotation as LOST? The shipment ' + ref0 + ' will be CANCELLED in the DSR.', ()=>{
+        prevSet(id, 'Lost');
+        dsr('/shipment/' + encodeURIComponent(ref0) + '/stage', {method:'POST', body: JSON.stringify({stage:'Lost', quoteNo:entry0.ref})})
+          .then((j)=>{
+            const a2 = loadArchive(); const x = a2.find(q=>q.id===id);
+            if(x){ x.dsrNominated = false; x.dsrLost = true; baseSave(a2); }
+            const d = j && j.data || {};
+            pasToast(d.blocked ? ('DSR not changed: ' + d.blocked) : ('DSR updated: ' + ref0 + (d.moved ? ' → Cancelled' : ' (already cancelled)')));
+          })
+          .catch((err)=> pasToast('Could not update DSR: ' + friendly(err) + ' — set Lost again to retry'));
+      });
+      return;
+    }
+
+    /* ---------- Sent (set back after Lost/Won): shipment returns to "Quoted" ---------- */
+    if(status === 'Sent' && ref0 && entry0.dsrLost){
+      prevSet(id, 'Sent');
+      dsr('/shipment/' + encodeURIComponent(ref0) + '/stage', {method:'POST', body: JSON.stringify({stage:'Quoted', quoteNo:entry0.ref})})
+        .then(()=>{
+          const a2 = loadArchive(); const x = a2.find(q=>q.id===id);
+          if(x){ x.dsrLost = false; x.dsrQuoted = true; baseSave(a2); }
+          pasToast('DSR updated: ' + ref0 + ' re-opened → Quoted');
+        })
+        .catch((err)=> pasToast('Could not update DSR: ' + friendly(err)));
+      return;
+    }
+
     if(status !== 'Won'){ prevSet(id, status); return; }
     const entry = loadArchive().find(e=>e.id===id);
     const ref = entry && entry.snapshot && entry.snapshot.dsrRef;
@@ -3395,11 +3428,11 @@ function forgetKey(){}
     // linked: mark Won, then move the existing shipment to Nomination
     const arr = loadArchive(); const e2 = arr.find(x=>x.id===id);
     if(e2){ e2.status = 'Won'; baseSave(arr); renderArchiveList(); }
-    if(entry.dsrNominated){ pasToast('Already nominated in DSR: ' + ref); return; }
+    if(entry.dsrNominated && !entry.dsrLost){ pasToast('Already nominated in DSR: ' + ref); return; }
     dsr('/shipment/' + encodeURIComponent(ref) + '/stage', {method:'POST', body: JSON.stringify({stage:'Nomination', quoteNo:entry.ref})})
       .then((j)=>{
         const a = loadArchive(); const x = a.find(q=>q.id===id);
-        if(x){ x.dsrNominated = true; x.dsrRef = ref; baseSave(a); }
+        if(x){ x.dsrNominated = true; x.dsrLost = false; x.dsrRef = ref; baseSave(a); }
         pasToast('DSR updated: ' + ref + (j.data.moved ? ' → Nomination' : ' (stage already ahead, history noted)'));
       })
       .catch((err)=> pasToast('Could not update DSR: ' + friendly(err) + ' — click Won again to retry'));
