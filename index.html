@@ -3358,6 +3358,29 @@ function forgetKey(){}
     });
   }
 
+  /* ---------- charge lines → DSR → CAN software ---------- */
+  function buildCharges(e){
+    const rows = (e && e.snapshot && e.snapshot.rows) || [];
+    const out = []; let grand = 0;
+    rows.forEach(r=>{
+      const desc = String(r.desc||'').trim();
+      let total, inr, line;
+      if(rowIsPct(r)){
+        const p = parseFloat(r.pct)||0; inr = grand * p / 100; total = inr;
+        line = {particulars:'CHARGES COLLECTION FEE', currency:'INR', rate:p, unit:1, total:total, roe:1, netCost:inr};
+      } else {
+        const rate = parseFloat(r.rate)||0, qty = parseFloat(r.qty)||0, roe = parseFloat(r.roe)||0;
+        total = rate*qty; inr = total*roe;
+        line = {particulars:desc, currency:r.cur||'INR', rate:rate, unit:qty, total:total, roe:roe||1, netCost:inr};
+      }
+      grand += inr||0;
+      if(desc || line.particulars==='CHARGES COLLECTION FEE'){
+        if(line.rate || line.total) out.push(line);
+      }
+    });
+    return out;
+  }
+
   /* ---------- tell the DSR when a linked quotation is saved ("Quoted") ---------- */
   const baseSave = saveArchive;
   window.saveArchive = saveArchive = function(arr){
@@ -3368,7 +3391,27 @@ function forgetKey(){}
         if(ref && !e.dsrQuoted && !e.dsrLost){ e.dsrQuoted = true; todo.push(e); }
       });
     }catch(e){}
+    // charge lines: send whenever they changed since the last time they were sent
+    const chTodo = [];
+    try{
+      (arr||[]).forEach(e=>{
+        const ref = e && !e.deleted && e.snapshot && e.snapshot.dsrRef;
+        if(!ref || e.dsrLost) return;
+        const lines = buildCharges(e);
+        const sig = JSON.stringify(lines);
+        if(lines.length && sig !== e.dsrChargesSig){ chTodo.push({e, lines, sig}); }
+      });
+    }catch(x){}
     baseSave(arr);
+    chTodo.forEach(({e, lines, sig})=>{
+      dsr('/shipment/' + encodeURIComponent(e.snapshot.dsrRef) + '/stage', {method:'POST', body: JSON.stringify({quoteNo:e.ref, charges:lines.map(l=>({particulars:l.particulars,currency:l.currency,rate:l.rate,unit:l.unit,total:l.total,roe:l.roe,netCost:l.netCost}))})})
+        .then(()=>{
+          const a = loadArchive(); const x = a.find(q=>q.id===e.id);
+          if(x){ x.dsrChargesSig = sig; baseSave(a); }
+          pasToast('Charges sent to DSR: ' + e.snapshot.dsrRef + ' (' + lines.length + ' lines) — will load in the CAN');
+        })
+        .catch((err)=> pasToast('Charges NOT sent to DSR: ' + friendly(err)));
+    });
     todo.forEach(e=>{
       const ref = e.snapshot.dsrRef;
       const { fill, changed } = diffWithDsr(e);
