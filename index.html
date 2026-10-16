@@ -1461,6 +1461,7 @@ function commitCombo(value){
         syncRowRoeOnCurrencyChange(row);
         const roeInput = document.querySelector(`.row-roe-input[data-idx="${idx}"]`);
         if(roeInput) roeInput.value = row.roe;
+        if(rowIsPct(row)) refreshAllRows = true;   // the ROE box appears / disappears with the currency
       }
     }
   }
@@ -1892,12 +1893,21 @@ function duplicateArchiveEntry(id){
     const cloned = JSON.parse(JSON.stringify(entry.snapshot));
     cloned.fields.quoteRef = generateQuoteRef();
     cloned.fields.quoteDate = '';
-    store[entry.mode] = cloned;
-    switchMode(entry.mode);
-    document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.key===entry.mode));
+    loadSnapshotIntoMode(entry.mode, cloned);
     closeArchive();
-    saveDraftDebounced();
   });
+}
+
+/* Put a saved quotation on screen WITHOUT letting the old on-screen values overwrite it.
+   (switchMode() first copies the screen into the current tab's data — if that tab is the one
+   being loaded, it used to replace the saved values with whatever was showing.) */
+function loadSnapshotIntoMode(mode, snap){
+  try{ saveCurrentFieldsToStore(); }catch(e){}   // keep the tab we are leaving safe
+  store[mode] = snap;
+  currentMode = mode;
+  document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.key===mode));
+  renderMode(mode);
+  saveDraftDebounced();
 }
 
 /* ---------------- EXPORT ---------------- */
@@ -2169,7 +2179,7 @@ function renderArchiveList(){
       <div class="arc-info">
         <div class="a-ref">${escAttr(entry.ref || 'No Ref')}</div>
         <div class="a-cust">${escAttr(entry.customer)}</div>
-        <div class="a-meta"><span>${dateStr}</span></div>
+        <div class="a-meta"><span>${dateStr}${entry.savedBy ? ' · ' + escAttr(entry.savedBy) : ''}</span></div>
       </div>
       <div class="arc-actions">
         ${archiveTab==='saved' ? `
@@ -2202,16 +2212,13 @@ function archiveAction(id, act){
   if(idx===-1) return;
   const entry = arr[idx];
   if(act==='view'){
-    openLightbox(entry.thumb);
+    if(window.__viewShared) window.__viewShared(entry); else openLightbox(entry.thumb);
     return;
   }
   if(act==='edit'){
     showConfirm('Load this saved quotation into the "'+entry.modeLabel+'" tab for editing? Any unsaved changes currently in that tab will be replaced.', ()=>{
-      store[entry.mode] = JSON.parse(JSON.stringify(entry.snapshot));
-      switchMode(entry.mode);
-      document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.key===entry.mode));
+      loadSnapshotIntoMode(entry.mode, JSON.parse(JSON.stringify(entry.snapshot)));
       closeArchive();
-      saveDraftDebounced();
     });
     return;
   }
@@ -2234,6 +2241,7 @@ function archiveAction(id, act){
   if(act==='purge'){
     showConfirm('Permanently delete this quotation? This cannot be undone.', ()=>{
       arr.splice(idx,1);
+      if(window.__purgeShared) window.__purgeShared(entry.id);
       saveArchive(arr);
       renderArchiveList();
       renderArchiveButtonCount();
@@ -2624,10 +2632,16 @@ function renderRows(){
 
     let curCell, rateCell, unitCell, roeCell;
     if(pct){
-      curCell  = `<td class="cur-cell"><span class="static-cell">INR</span></td>`;
+      const pcur = curVal || 'INR';
+      curCell  = `<td class="cur-cell">
+        <div class="combo-field" tabindex="0" data-combo="currency" data-field="cur" data-idx="${idx}" data-value="${escAttr(pcur)}">
+          <span class="cf-text">${escAttr(pcur)}</span><span class="cf-arrow">${I.chevron}</span>
+        </div></td>`;
       rateCell = `<td class="num"><div class="pct-wrap"><input class="combo-input" style="text-align:right" data-field="pct" data-idx="${idx}" value="${(r.pct!==undefined && r.pct!==null)?r.pct:''}" placeholder="0"><span class="pct-sign">%</span></div></td>`;
       unitCell = `<td><span class="pct-note" data-idx="${idx}">of total above</span></td>`;
-      roeCell  = `<td class="num"><span class="static-cell">1</span></td>`;
+      roeCell  = pcur === 'INR'
+        ? `<td class="num"><span class="static-cell">1</span></td>`
+        : `<td class="num"><input class="combo-input row-roe-input" style="text-align:right" data-field="roe" data-idx="${idx}" value="${r.roe!==undefined?r.roe:1}"></td>`;
     } else {
       curCell = `<td class="cur-cell">
         <div class="combo-field${curVal?'':' empty'}" tabindex="0" data-combo="currency" data-field="cur" data-idx="${idx}" data-value="${escAttr(curVal)}">
@@ -2735,7 +2749,9 @@ function recalc(){
       const p = parseFloat(r.pct) || 0;
       const base = grand;
       totalInr = base * p / 100;
-      total = totalInr;
+      const fcur = r.cur || 'INR';
+      const froe = fcur === 'INR' ? 1 : (parseFloat(r.roe) || 1);
+      total = totalInr / froe;   // shown in the fee's own currency; the INR column stays the true value
       const note = document.querySelector(`.pct-note[data-idx="${idx}"]`);
       if(note) note.textContent = 'of ' + fmtINR(base) + ' above';
     } else {
@@ -2758,7 +2774,7 @@ function recalc(){
 
 function focusNextRowField(idx, fieldName){
   const rows = store[currentMode].rows;
-  const order = rowIsPct(rows[idx]) ? ['desc','pct'] : ['desc','cur','rate','qty','unitType'];
+  const order = rowIsPct(rows[idx]) ? ['desc','cur','pct'] : ['desc','cur','rate','qty','unitType'];
   const pos = order.indexOf(fieldName);
   if(pos>=0 && pos < order.length-1){
     focusRowField(idx, order[pos+1]);
@@ -2799,6 +2815,7 @@ function commitCombo(value){
         syncRowRoeOnCurrencyChange(row);
         const roeInput = document.querySelector(`.row-roe-input[data-idx="${idx}"]`);
         if(roeInput) roeInput.value = row.roe;
+        if(rowIsPct(row)) refreshAllRows = true;   // the ROE box appears / disappears with the currency
       }
     }
   }
@@ -2920,7 +2937,7 @@ function renderArchiveList(){
       <div class="arc-info">
         <div class="a-ref">${escAttr(entry.ref || 'No Ref')}</div>
         <div class="a-cust">${escAttr(entry.customer)}</div>
-        <div class="a-meta"><span>${dateStr}</span></div>
+        <div class="a-meta"><span>${dateStr}${entry.savedBy ? ' · ' + escAttr(entry.savedBy) : ''}</span></div>
         ${statusHtml}
       </div>
       <div class="arc-actions">
@@ -3366,8 +3383,10 @@ function forgetKey(){}
       const desc = String(r.desc||'').trim();
       let total, inr, line;
       if(rowIsPct(r)){
-        const p = parseFloat(r.pct)||0; inr = grand * p / 100; total = inr;
-        line = {particulars:'CHARGES COLLECTION FEE', currency:'INR', rate:p, unit:1, total:total, roe:1, netCost:inr};
+        const p = parseFloat(r.pct)||0; inr = grand * p / 100;
+        const fcur = r.cur || 'INR', froe = fcur === 'INR' ? 1 : (parseFloat(r.roe)||1);
+        total = inr / froe;
+        line = {particulars:'CHARGES COLLECTION FEE', currency:fcur, rate:total, unit:1, total:total, roe:froe, netCost:inr};
       } else {
         const rate = parseFloat(r.rate)||0, qty = parseFloat(r.qty)||0, roe = parseFloat(r.roe)||0;
         total = rate*qty; inr = total*roe;
@@ -3480,6 +3499,202 @@ function forgetKey(){}
       })
       .catch((err)=> pasToast('Could not update DSR: ' + friendly(err) + ' — click Won again to retry'));
   };
+})();
+</script>
+
+
+<!-- ================= SHARED ARCHIVE: every saved quotation is visible to the whole team ================= -->
+<script>
+(function(){
+  'use strict';
+  const API = '/api/archive';
+  const K_USER = 'pas_quote_user', K_PASS = 'pas_quote_pass', K_CUR = 'pas_quote_cursor_v1';
+  let off = false;            // server not set up -> everything stays local, silently
+  let busy = false, again = false, flushTimer = null, noticed = false;
+  const previews = {};        // id -> sharp preview image waiting to be uploaded
+  let pendingPreview = null;
+
+  const lsGet = (k)=>{ try{ return localStorage.getItem(k) || ''; }catch(e){ return ''; } };
+  const lsSet = (k,v)=>{ try{ localStorage.setItem(k, v); }catch(e){} };
+
+  /* what counts as "this quotation changed" */
+  function sig(e){
+    return [e.id, e.ref, e.customer, e.status || '', e.deleted ? 1 : 0, e.deletedAt || '',
+      e.dsrRef || (e.snapshot && e.snapshot.dsrRef) || '', e.dsrQuoted ? 1 : 0, e.dsrLost ? 1 : 0, e.dsrNominated ? 1 : 0,
+      e.dsrChargesSig || '', e.savedBy || '', (e.formats || []).join(',')].join('|');
+  }
+
+  /* writes the browser copy WITHOUT triggering the DSR hooks again */
+  function localWrite(arr){
+    arr = arr.slice();
+    if(arr.length > MAX_ARCHIVE_ENTRIES) arr.length = MAX_ARCHIVE_ENTRIES;
+    let attempt = arr;
+    for(let t = 0; t < 8; t++){
+      try{ localStorage.setItem(ARCHIVE_KEY, JSON.stringify(attempt)); return; }
+      catch(e){
+        if(!attempt.length) return;
+        attempt = attempt.slice(0, Math.max(0, attempt.length - Math.max(1, Math.ceil(attempt.length * 0.15))));
+      }
+    }
+  }
+
+  async function call(body, retried){
+    if(off) return null;
+    let r;
+    try{
+      r = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-archive-pass': lsGet(K_PASS) }, body: JSON.stringify(body) });
+    }catch(e){ return null; }                       // offline: try again later
+    if(r.status === 404 || r.status === 501){ off = true; return null; }
+    if(r.status === 401){
+      if(retried) { lsSet(K_PASS, ''); pasToast('Wrong team passcode — try again.'); return null; }
+      const p = window.prompt('Team passcode for the shared quotation archive:');
+      if(!p) return null;
+      lsSet(K_PASS, p.trim());
+      return call(body, true);
+    }
+    const j = await r.json().catch(()=>null);
+    return r.ok && j && j.status === 'success' ? j : null;
+  }
+
+  function whoAmI(){
+    let n = lsGet(K_USER);
+    if(!n){
+      try{ n = (window.prompt('Your name (shown next to the quotations you save):') || '').trim().slice(0, 40); }catch(e){ n = ''; }
+      if(n) lsSet(K_USER, n);
+    }
+    return n;
+  }
+
+  /* ---------- pull what others saved ---------- */
+  async function pull(){
+    let arr = loadArchive();
+    if(!arr.length) lsSet(K_CUR, '0');
+    let cursor = Number(lsGet(K_CUR)) || 0, changed = false, guard = 0;
+    for(;;){
+      const j = await call({ action: 'list', since: Math.max(0, cursor - 1) });
+      if(!j) return false;
+      arr = loadArchive();
+      const byId = new Map(arr.map(e=>[e.id, e]));
+      (j.purged || []).forEach(id=>{
+        if(byId.has(id)){ arr = arr.filter(e=>e.id !== id); byId.delete(id); changed = true; }
+      });
+      (j.entries || []).forEach(se=>{
+        if(!se || !se.id) return;
+        const mine = byId.get(se.id);
+        const mineClean = mine && mine._pushed === sig(mine);
+        if(!mine){ se._pushed = sig(se); arr.push(se); changed = true; }
+        else if(mineClean && sig(mine) !== sig(se)){
+          Object.keys(mine).forEach(k=>{ delete mine[k]; });
+          Object.assign(mine, se); mine._pushed = sig(mine); changed = true;
+        } else if(mineClean){ /* identical */ }
+        else { /* I changed it here and not yet sent it: keep mine, it will be sent */ }
+      });
+      cursor = Math.max(cursor, Number(j.cursor) || 0);
+      lsSet(K_CUR, String(cursor));
+      if(changed){
+        arr.sort((a,b)=> new Date(b.dateSaved) - new Date(a.dateSaved));
+        localWrite(arr);
+      }
+      if(!j.more || ++guard > 60) break;
+    }
+    if(changed){
+      try{ renderArchiveButtonCount(); }catch(e){}
+      if(document.getElementById('archiveOverlay').classList.contains('open')){ try{ renderArchiveList(); }catch(e){} }
+    }
+    return true;
+  }
+
+  /* ---------- send mine ---------- */
+  async function flush(){
+    if(off) return;
+    if(busy){ again = true; return; }
+    busy = true;
+    try{
+      let arr = loadArchive();
+      const todo = arr.filter(e=> e && e.id && e._pushed !== sig(e));
+      if(todo.length > 3 && !noticed){ noticed = true; pasToast('Sharing ' + todo.length + ' saved quotations with the team…'); }
+      for(const e of todo){
+        const copy = JSON.parse(JSON.stringify(e)); delete copy._pushed; delete copy._tooBig;
+        const body = JSON.stringify({ action: 'upsert', entry: copy, preview: previews[e.id] || undefined });
+        if(body.length > 4200000){
+          const a2 = loadArchive(); const x = a2.find(q=>q.id === e.id);
+          if(x && !x._tooBig){ x._tooBig = true; x._pushed = sig(x); localWrite(a2); pasToast('One quotation is too large to share with the team (it stays on this computer).'); }
+          continue;
+        }
+        const j = await call({ action: 'upsert', entry: copy, preview: previews[e.id] || undefined });
+        if(!j) break;                                  // try again on the next round
+        delete previews[e.id];
+        const a2 = loadArchive(); const x = a2.find(q=>q.id === e.id);
+        if(x){ x._pushed = sig(x); localWrite(a2); }
+      }
+    } finally {
+      busy = false;
+      if(again){ again = false; setTimeout(flush, 300); }
+    }
+  }
+  const queueFlush = ()=>{ clearTimeout(flushTimer); flushTimer = setTimeout(flush, 700); };
+
+  let lastSync = 0, syncing = false;
+  async function sync(force){
+    if(syncing || (!force && Date.now() - lastSync < 8000)) return;
+    syncing = true;
+    try{ const ok = await pull(); lastSync = Date.now(); if(ok) await flush(); }
+    finally { syncing = false; }
+  }
+
+  /* ---------- hooks into the existing archive ---------- */
+  const prevSave = saveArchive;
+  window.saveArchive = saveArchive = function(arr){
+    try{
+      (arr || []).forEach(e=>{
+        if(!e || !e.snapshot) return;
+        const fresh = !e._pushed && (Date.now() - new Date(e.dateSaved).getTime()) < 20000;   // saved just now, not an old one
+        if(fresh && !e.savedBy){ const n = whoAmI(); if(n) e.savedBy = n; }
+        if(fresh && e.id && pendingPreview && !previews[e.id] && !e.hasPreview){
+          previews[e.id] = pendingPreview; e.hasPreview = true; pendingPreview = null;
+        }
+      });
+    }catch(x){}
+    prevSave(arr);
+    queueFlush();
+  };
+
+  /* a sharp picture of the quotation, taken at the moment it is downloaded */
+  const prevThumb = makeThumb;
+  makeThumb = function(canvas, cb){
+    try{
+      const w = Math.min(1100, canvas.width), h = Math.round(canvas.height * (w / canvas.width));
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); g.drawImage(canvas, 0, 0, w, h);
+      pendingPreview = c.toDataURL('image/jpeg', 0.78);
+    }catch(e){ pendingPreview = null; }
+    return prevThumb(canvas, cb);
+  };
+
+  window.__viewShared = async function(entry){
+    openLightbox(entry.thumb);
+    const img = document.getElementById('lightboxImg');
+    if(!entry.hasPreview){ return; }
+    const j = await call({ action: 'preview', id: entry.id });
+    if(j && j.preview && document.getElementById('lightbox').classList.contains('open')) img.src = j.preview;
+  };
+
+  window.__purgeShared = function(id){ call({ action: 'purge', id: id }); };
+
+  const prevOpen = openArchive;
+  openArchive = function(){ prevOpen(); sync(true); };
+
+  /* other parts of the page save the archive directly (Won / Lost buttons, DSR replies) — catch those too */
+  const prevStatus = setQuoteStatus;
+  setQuoteStatus = function(){ const r = prevStatus.apply(this, arguments); queueFlush(); return r; };
+  setInterval(()=>{
+    if(off || busy) return;
+    try{ if(loadArchive().some(e=> e && e.id && e._pushed !== sig(e))) flush(); }catch(e){}
+  }, 6000);
+
+  window.addEventListener('focus', ()=>{ sync(); });
+  setInterval(()=>{ if(!document.hidden) sync(); }, 45000);
+  setTimeout(()=>sync(true), 1200);
 })();
 </script>
 
