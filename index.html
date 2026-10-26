@@ -778,7 +778,7 @@ body.capturing .drag-handle{visibility:hidden;}
 
   <!-- FOOTER -->
   <div class="qc-footer">
-    <div><b class="fl" contenteditable="true" data-key="footerAddr">Site No:171, Arkavathey Layout, 7th Block, Sy No: 90/3, Jakkur-BDA, Bangalore - 560092, Karnataka, India.</b></div>
+    <div><b class="fl" contenteditable="true" data-key="footerAddr">Site No:171, Arkavathey Layout, 7th Block, Sy No: 90/3, Jakkur-BDA, Bangalore - 560064, Karnataka, India.</b></div>
     <div>Ph: <span class="fl" contenteditable="true" data-key="footerPhone">+91 9036101201</span> &nbsp;|&nbsp; Email: <span class="fl" contenteditable="true" data-key="footerEmail">shivu@pasfreight.com</span> &nbsp;|&nbsp; GST: <span class="fl" contenteditable="true" data-key="footerGst">—</span></div>
   </div>
 
@@ -962,6 +962,7 @@ const MODES = [
    terms:[
      'DESTINATION CHARGES, DUTY AND TAXES, WAREHOUSE CHARGES, EXAM HOLD/STORAGE AT ACTUAL ON CNEE\u2019S A/C.',
      'Rates are subject to:',
+     'VALID FOR 7 DAYS FROM DATE OF QUOTATION.',
      'IF CARGO ARRIVES ON WEEKENDS, STORAGE FEES MAY APPLY.',
      'GENERAL GOOD ONLY. NOT APPLICABLE TO DG, PERISHABLE, AND OVERLENGTH CARGO.',
      'QUOTE EXCLUDES APPLICABLE DUTIES/TAXES/GST/ MPI & CUSTOMS INSPECTION FEES/FUMIGATION AT ORIGIN',
@@ -989,6 +990,7 @@ const MODES = [
    terms:[
      'DESTINATION CHARGES, DUTY AND TAXES, WAREHOUSE CHARGES, EXAM HOLD/STORAGE AT ACTUAL ON CNEE\u2019S A/C.',
      'Rates are subject to:',
+     'VALID FOR 7 DAYS FROM DATE OF QUOTATION.',
      'IF CARGO ARRIVES ON WEEKENDS, STORAGE FEES MAY APPLY.',
      'GENERAL GOOD ONLY. NOT APPLICABLE TO DG, PERISHABLE, AND OVERLENGTH CARGO.',
      'QUOTE EXCLUDES APPLICABLE DUTIES/TAXES/GST/ MPI & CUSTOMS INSPECTION FEES/FUMIGATION AT ORIGIN',
@@ -1053,7 +1055,7 @@ const MODES = [
 let currentMode = 'sea_fcl';
 let store = {}; // per-mode data, loaded/created lazily
 let globalFields = {companyName:'PAS FREIGHT SERVICES PVT LTD', companyTag:'IMPORT EXPORT AIR SEA FCL/LCL/DOMESTIC TRANSPORT AND FTWZ WAREHOUSING',
-  footerAddr:'Site No:171, Arkavathey Layout, 7th Block, Sy No: 90/3, Jakkur-BDA, Bangalore - 560092, Karnataka, India.', footerPhone:'+91 9036101201', footerEmail:'shivu@pasfreight.com', footerGst:'—'};
+  footerAddr:'Site No:171, Arkavathey Layout, 7th Block, Sy No: 90/3, Jakkur-BDA, Bangalore - 560064, Karnataka, India.', footerPhone:'+91 9036101201', footerEmail:'shivu@pasfreight.com', footerGst:'—'};
 
 function generateQuoteRef(){
   return 'SPIM'+Math.floor(100000+Math.random()*900000);
@@ -1136,6 +1138,7 @@ function boot(){
   const draft = loadDraft();
   if(draft){
     if(draft.globalFields) Object.assign(globalFields, draft.globalFields);
+    if(globalFields.footerAddr) globalFields.footerAddr = String(globalFields.footerAddr).replace('560092','560064');
     if(draft.currentMode && MODES.some(m=>m.key===draft.currentMode)) currentMode = draft.currentMode;
     if(draft.store){
       MODES.forEach(m=>{
@@ -1167,6 +1170,7 @@ function boot(){
   // quote date picker (native calendar + manual typing)
   const dateEl = document.getElementById('fldQuoteDate');
   dateEl.addEventListener('input', ()=>{ store[currentMode].fields.quoteDate = dateEl.value; saveDraftDebounced(); });
+  dateEl.addEventListener('change', ()=>{ renderTerms(); });
   dateEl.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); dateEl.blur(); focusNextField(dateEl); } });
 
   renderMode(currentMode);
@@ -1697,9 +1701,27 @@ function delRow(idx){
 }
 
 /* ---------------- TERMS ---------------- */
+
+/* ---- automatic validity date: "VALID UNTIL <quote date + 7 days>" ---- */
+const VALID_DAYS = 7;
+const VALID_RE = /^\s*valid(ation|ity)?\b.*(days from date of quotation|valid until)/i;
+function validityLine(dateStr){
+  let d = dateStr ? new Date(dateStr + 'T00:00:00') : new Date();
+  if(isNaN(d)) d = new Date();
+  d.setDate(d.getDate() + VALID_DAYS);
+  const M = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+  return 'VALID UNTIL ' + String(d.getDate()).padStart(2,'0') + '-' + M[d.getMonth()] + '-' + d.getFullYear() + ' (' + VALID_DAYS + ' DAYS FROM DATE OF QUOTATION).';
+}
+function applyValidity(data){
+  if(!data || !data.terms) return;
+  const line = validityLine(data.fields && data.fields.quoteDate);
+  data.terms = data.terms.map(t=> VALID_RE.test(String(t)) ? line : t);
+}
+
 let termDragFromIdx = null;
 
 function renderTerms(){
+  applyValidity(store[currentMode]);
   const wrap = document.getElementById('termsBody');
   wrap.innerHTML = '';
   store[currentMode].terms.forEach((t, idx)=>{
@@ -1880,6 +1902,7 @@ function duplicateCurrentAsNew(){
   const data = store[currentMode];
   data.fields.quoteRef = generateQuoteRef();
   data.fields.quoteDate = '';
+  delete data.dsrRef; delete data.dsrLoaded;
   renderMode(currentMode);
   saveDraftDebounced();
 }
@@ -1893,6 +1916,7 @@ function duplicateArchiveEntry(id){
     const cloned = JSON.parse(JSON.stringify(entry.snapshot));
     cloned.fields.quoteRef = generateQuoteRef();
     cloned.fields.quoteDate = '';
+    delete cloned.dsrRef; delete cloned.dsrLoaded;
     loadSnapshotIntoMode(entry.mode, cloned);
     closeArchive();
   });
@@ -1988,6 +2012,7 @@ function archiveThisQuote(canvas, format){
         arr.unshift(entry);
         saveArchive(arr);
         renderArchiveButtonCount();
+        if(entry.snapshot && entry.snapshot.dsrRef && window.__dsrAfterSave) window.__dsrAfterSave(entry.id);
       }catch(e){ console.warn('Could not save this quote to the archive:', e); }
     });
   }catch(e){ console.warn('Could not build archive thumbnail:', e); }
@@ -2861,6 +2886,7 @@ function archiveThisQuote(canvas, format){
         arr.unshift(entry);
         saveArchive(arr);
         renderArchiveButtonCount();
+        if(entry.snapshot && entry.snapshot.dsrRef && window.__dsrAfterSave) window.__dsrAfterSave(entry.id);
       }catch(e){ console.warn('Could not save this quote to the archive:', e); }
     });
   }catch(e){ console.warn('Could not build archive thumbnail:', e); }
@@ -3196,7 +3222,7 @@ function forgetKey(){}
       if(!r.ok) throw new Error(j.message || 'DSR error');
       mem.set('prefix', p.prefix); mem.set('ini', p.initials); mem.set('mail', p.createdByEmail); mem.set('dir', p.importExport);
       const arr = loadArchive(); const e = arr.find(x=>x.id===pending.id);
-      if(e){ e.dsrRef = j.data.refNo; saveArchive(arr); }
+      if(e){ e.dsrRef = j.data.refNo; e.dsrNominated = true; if(e.snapshot) e.snapshot.dsrRef = j.data.refNo; saveArchive(arr); if(window.__dsrAfterCreate) window.__dsrAfterCreate(e.id); }
       closeDsr();
       pasToast((j.duplicate ? 'Already in DSR: ' : 'Sent to DSR ✔  Ref: ') + j.data.refNo);
       renderArchiveList();
@@ -3288,9 +3314,9 @@ function forgetKey(){}
     $('dsrLoadGo').disabled = true; $('dsrLoadGo').textContent = 'Loading…';
     try{
       const j = await dsr('/shipment/' + encodeURIComponent(ref));
-      applyShipment(j.data);
+      const missing = applyShipment(j.data);
       closeLoad();
-      pasToast('Loaded from DSR: ' + j.data.refNo);
+      pasToast('Loaded from DSR: ' + j.data.refNo + (missing && missing.length ? ' — not filled in the DSR yet: ' + missing.join(', ') : ' — all details filled'));
     }catch(e){
       loadErr(friendly(e));
       $('dsrLoadGo').disabled = false; $('dsrLoadGo').textContent = 'Try again';
@@ -3310,22 +3336,33 @@ function forgetKey(){}
     const customer = d.customerName || (isExport ? d.shipperName : d.consigneeName) || '';
     const other = isExport ? d.consigneeName : d.shipperName;
     const F = data.fields;
-    const set = (name, val)=>{ if(val!==null && val!==undefined && String(val).trim()!=='') F[name] = String(val); };
-    set('customerName', customer);
-    set('supplierName', other);
-    set('origin', d.fromLocation);
-    set('destination', d.toLocation);
-    set('incoterm', up(d.terms).toUpperCase());
-    set('cargoType', d.commodityName);
-    set('packages', d.noOfPackages);
-    set('grossWeight', d.grossWeight);
-    set('chWeight', d.weight);
-    if(currentMode !== 'domestic') set('cbm', d.cbm);
+    // The DSR is the master: every field it covers is REPLACED (blank if the DSR has nothing),
+    // so details of a previously loaded shipment can never stay behind.
+    const val = (v)=> (v===null || v===undefined || String(v).trim()==='') ? '' : String(v);
+    const missing = [];
+    const put = (name, v, label)=>{ F[name] = val(v); if(!F[name] && label) missing.push(label); };
+    put('customerName', customer, 'Customer');
+    put('supplierName', other, 'Supplier');
+    put('origin', d.fromLocation, 'From');
+    put('destination', d.toLocation, 'To');
+    put('incoterm', up(d.terms).toUpperCase(), 'Terms');
+    put('cargoType', d.commodityName, 'Commodity');
+    put('packages', d.noOfPackages, 'Packages');
+    put('grossWeight', d.grossWeight, 'Gross weight');
+    put('chWeight', d.weight, 'Chargeable weight');
+    if(currentMode !== 'domestic') put('cbm', d.cbm, 'CBM');
+    // per-KG / per-CBM charge lines follow the loaded weight, so the total is not based on old numbers
+    const wt = parseFloat(d.weight), cb = parseFloat(d.cbm);
+    (data.rows||[]).forEach(r=>{
+      if(/kg/i.test(r.unitType||'') && isFinite(wt) && wt>0) r.qty = wt;
+      else if(/^cbm$/i.test(r.unitType||'') && isFinite(cb) && cb>0) r.qty = cb;
+    });
     F.quoteRef = d.refNo;           // one number all the way: DSR reference = quotation reference
     data.dsrRef = d.refNo;          // remembers the link (saved with the quotation)
-    data.dsrLoaded = d;             // what the DSR had at that moment (to spot what you change here)
+    data.dsrLoaded = d;             // what the DSR had at that moment
     renderMode(currentMode);
     try{ saveDraftNow(); }catch(e){}
+    return missing;
   }
 
   document.addEventListener('click', (ev)=>{
@@ -3363,18 +3400,6 @@ function forgetKey(){}
     });
     return {fill, changed};
   }
-  function askOverwrite(e, changed){
-    const keys = Object.keys(changed);
-    if(!keys.length) return;
-    const list = keys.map(k=> LABEL[k] + ': ' + changed[k].from + ' → ' + changed[k].to).join('  •  ');
-    showConfirm('You changed details that are already in the DSR (' + list + '). Update the DSR with the quotation values?', ()=>{
-      const send = {}; keys.forEach(k=> send[k] = changed[k].to);
-      dsr('/shipment/' + encodeURIComponent(e.snapshot.dsrRef) + '/stage', {method:'POST', body: JSON.stringify({quoteNo:e.ref, updates:send, overwrite:true})})
-        .then(()=> pasToast('DSR details updated from the quotation.'))
-        .catch((err)=> pasToast('Could not update DSR details: ' + friendly(err)));
-    });
-  }
-
   /* ---------- charge lines → DSR → CAN software ---------- */
   function buildCharges(e){
     const rows = (e && e.snapshot && e.snapshot.rows) || [];
@@ -3400,68 +3425,160 @@ function forgetKey(){}
     return out;
   }
 
-  /* ---------- tell the DSR when a linked quotation is saved ("Quoted") ---------- */
   const baseSave = saveArchive;
-  window.saveArchive = saveArchive = function(arr){
-    const todo = [];
-    try{
-      (arr||[]).forEach(e=>{
-        const ref = e && !e.deleted && e.snapshot && e.snapshot.dsrRef;
-        if(ref && !e.dsrQuoted && !e.dsrLost){ e.dsrQuoted = true; todo.push(e); }
-      });
-    }catch(e){}
-    // charge lines: send whenever they changed since the last time they were sent
-    const chTodo = [];
-    try{
-      (arr||[]).forEach(e=>{
-        const ref = e && !e.deleted && e.snapshot && e.snapshot.dsrRef;
-        if(!ref || e.dsrLost) return;
-        const lines = buildCharges(e);
-        const sig = JSON.stringify(lines);
-        if(lines.length && sig !== e.dsrChargesSig){ chTodo.push({e, lines, sig}); }
-      });
-    }catch(x){}
-    baseSave(arr);
-    chTodo.forEach(({e, lines, sig})=>{
-      dsr('/shipment/' + encodeURIComponent(e.snapshot.dsrRef) + '/stage', {method:'POST', body: JSON.stringify({quoteNo:e.ref, charges:lines.map(l=>({particulars:l.particulars,currency:l.currency,rate:l.rate,unit:l.unit,total:l.total,roe:l.roe,netCost:l.netCost}))})})
-        .then(()=>{
-          const a = loadArchive(); const x = a.find(q=>q.id===e.id);
-          if(x){ x.dsrChargesSig = sig; baseSave(a); }
-          pasToast('Charges sent to DSR: ' + e.snapshot.dsrRef + ' (' + lines.length + ' lines) — will load in the CAN');
-        })
-        .catch((err)=> pasToast('Charges NOT sent to DSR: ' + friendly(err)));
+  /* ==================================================================================
+     ONE-ENTRY SYNC  (rewritten for accuracy)
+     - Only the person who SAVES or clicks WON talks to the DSR. Other people's quotations that
+       arrive in the shared Archive are never re-sent from this browser.
+     - Everything goes in one call: stage + details + charge lines, taken from the NEWEST saved
+       version of that quotation.
+     - After Won the DSR is read back and checked (stage, charge lines, charge total).
+     ================================================================================== */
+  const ORDER = ['Enquiry','Rates Requested','Quoted','Nomination'];
+  const refOf = (e)=> e && e.snapshot && e.snapshot.dsrRef;
+  const enc = encodeURIComponent;
+
+  function latestFor(entry){
+    const list = loadArchive().filter(x=> !x.deleted && x.snapshot && x.ref === entry.ref);
+    list.sort((a,b)=> new Date(b.dateSaved) - new Date(a.dateSaved));
+    return list[0] || entry;
+  }
+  function markSameRef(ref, patch, exceptId){
+    if(!ref) return;
+    const a = loadArchive(); let hit = false;
+    a.forEach(x=>{ if(x && !x.deleted && x.ref === ref && x.id !== exceptId){ Object.assign(x, patch); hit = true; } });
+    if(hit) baseSave(a);
+  }
+  async function getShipment(ref){ return (await dsr('/shipment/' + enc(ref))).data; }
+
+  function differences(e, d){
+    const q = quoteValues(e), out = {};
+    Object.keys(LABEL).forEach(k=>{
+      const qv = q[k]; if(qv===null || qv==='' || qv===undefined) return;
+      const dv = d[k]; if(dv===null || dv===undefined || dv==='') return;
+      const same = (typeof qv==='number') ? Number(dv)===qv : String(dv).trim().toUpperCase()===String(qv).trim().toUpperCase();
+      if(!same) out[k] = {from:dv, to:qv};
     });
-    todo.forEach(e=>{
-      const ref = e.snapshot.dsrRef;
-      const { fill, changed } = diffWithDsr(e);
-      dsr('/shipment/' + encodeURIComponent(ref) + '/stage', {method:'POST', body: JSON.stringify({stage:'Quoted', quoteNo:e.ref, updates:fill})})
-        .then((j)=>{
-          const n = (j.data.applied||[]).length;
-          pasToast('DSR updated: ' + ref + ' → Quoted' + (n ? ' · ' + n + ' detail(s) filled in' : ''));
-          askOverwrite(e, changed);
-        })
-        .catch((err)=>{ // not delivered: allow another try next time it is saved
-          const a = loadArchive(); const x = a.find(q=>q.id===e.id);
-          if(x){ x.dsrQuoted = false; baseSave(a); }
-          pasToast('DSR NOT updated for ' + ref + ': ' + friendly(err));
-        });
+    return out;
+  }
+  function detailUpdates(e){
+    const q = quoteValues(e), u = {};
+    Object.keys(LABEL).forEach(k=>{ const v = q[k]; if(v!==null && v!=='' && v!==undefined) u[k] = v; });
+    return u;
+  }
+  async function pushToDsr(entry, stage, overwrite){
+    const e = entry, ref = refOf(e);
+    const lines = buildCharges(e);
+    const body = {quoteNo: e.ref, updates: detailUpdates(e), overwrite: !!overwrite};
+    if(stage) body.stage = stage;
+    if(lines.length) body.charges = lines;
+    const j = await dsr('/shipment/' + enc(ref) + '/stage', {method:'POST', body: JSON.stringify(body)});
+    return {res: j.data, lines};
+  }
+  function chargeTotal(lines){ return lines.reduce((s,l)=> s + (parseFloat(l.netCost)||0), 0); }
+
+  async function verify(ref, stage, lines){
+    const problems = [];
+    const d = await getShipment(ref);
+    if(stage){
+      const have = ORDER.indexOf(d.stage), want = ORDER.indexOf(stage);
+      if(have !== -1 && want !== -1 && have < want) problems.push('stage is still "' + d.stage + '"');
+    }
+    if(lines && lines.length){
+      const qc = d.quotedCharges && d.quotedCharges.lines;
+      if(!qc || qc.length !== lines.length) problems.push('charge lines: DSR has ' + (qc ? qc.length : 0) + ', quotation has ' + lines.length);
+      else if(Math.abs(chargeTotal(qc) - chargeTotal(lines)) > 1) problems.push('charge total differs');
+    }
+    return {problems, d};
+  }
+
+  const askedKey = (ref, diff)=> ref + '|' + JSON.stringify(diff);
+  const askedSet = new Set();
+  function askOverwrite(e, diff){
+    const keys = Object.keys(diff); if(!keys.length) return;
+    const sig = askedKey(refOf(e), diff);
+    if(askedSet.has(sig)) return; askedSet.add(sig);
+    const list = keys.map(k=> LABEL[k] + ': ' + diff[k].from + ' → ' + diff[k].to).join('  •  ');
+    showConfirm('The DSR has different details from this quotation (' + list + '). Update the DSR to match the quotation?', ()=>{
+      const send = {}; keys.forEach(k=> send[k] = diff[k].to);
+      dsr('/shipment/' + enc(refOf(e)) + '/stage', {method:'POST', body: JSON.stringify({quoteNo:e.ref, updates:send, overwrite:true})})
+        .then(()=> pasToast('DSR details updated from the quotation.'))
+        .catch((err)=> pasToast('Could not update DSR details: ' + friendly(err)));
     });
+  }
+
+  /* ---- failed calls are kept in THIS browser and retried automatically ---- */
+  const PEND = 'pas_dsr_pending';
+  const pendList = ()=>{ try{ return JSON.parse(localStorage.getItem(PEND)||'[]'); }catch(x){ return []; } };
+  const pendSave = (l)=>{ try{ localStorage.setItem(PEND, JSON.stringify(l)); }catch(x){} };
+  function pendAdd(id, stage){ const l = pendList().filter(p=>p.id!==id); l.push({id, stage}); pendSave(l); }
+  function pendDone(id){ pendSave(pendList().filter(p=>p.id!==id)); }
+  let retrying = false;
+  async function retryPending(){
+    if(retrying) return; retrying = true;
+    try{
+      for(const p of pendList()){
+        const e0 = loadArchive().find(x=>x.id===p.id);
+        if(!e0 || !refOf(e0)){ pendDone(p.id); continue; }
+        try{ await sendStage(e0, p.stage, true); }catch(x){ /* stays queued */ }
+      }
+    } finally { retrying = false; }
+  }
+
+  /* stage = 'Quoted' | 'Nomination'. Uses the newest saved version. */
+  async function sendStage(entry, stage, quiet){
+    const e = latestFor(entry), ref = refOf(e);
+    try{
+      const {res, lines} = await pushToDsr(e, stage, false);
+      pendDone(entry.id);
+      const a = loadArchive();
+      a.forEach(x=>{ if(!x.deleted && x.ref === e.ref){ if(stage==='Quoted') x.dsrQuoted = true; if(stage==='Nomination'){ x.dsrNominated = true; x.dsrLost = false; } x.dsrChargesSig = JSON.stringify(lines); } });
+      baseSave(a); renderArchiveList();
+      const v = await verify(ref, stage, lines);
+      const bits = [];
+      if(res.moved) bits.push('→ ' + stage); else if(stage==='Nomination') bits.push('(stage already ahead)');
+      if((res.applied||[]).length) bits.push((res.applied||[]).filter(k=>k!=='charges').length + ' detail(s) filled');
+      if(lines.length) bits.push(lines.length + ' charge lines');
+      if(v.problems.length) pasToast('⚠ DSR ' + ref + ' saved but please check: ' + v.problems.join('; '));
+      else pasToast('✔ DSR ' + ref + ' updated and verified ' + bits.join(' · '));
+      askOverwrite(e, differences(e, v.d));
+    }catch(err){
+      pendAdd(entry.id, stage);
+      if(!quiet) pasToast('DSR NOT updated for ' + ref + ': ' + friendly(err) + ' — it will retry automatically');
+      throw err;
+    }
+  }
+
+  window.__dsrAfterSave = function(id){          // called right after a quotation is saved/downloaded
+    const e = loadArchive().find(x=>x.id===id);
+    if(!e || !refOf(e) || e.dsrLost) return;
+    const stage = e.status === 'Won' || e.dsrNominated ? null : 'Quoted';
+    if(stage) sendStage(e, 'Quoted').catch(()=>{});
+    else { // already nominated: only keep details/charges current
+      pushToDsr(latestFor(e), null, false).then(()=> pasToast('✔ DSR ' + refOf(e) + ': charges updated')).catch(err=> pasToast('DSR charges NOT updated: ' + friendly(err)));
+    }
+  };
+  window.__dsrAfterCreate = function(id){        // shipment was just created from a Won quotation: add the charge lines
+    const e = loadArchive().find(x=>x.id===id);
+    if(!e || !refOf(e)) return;
+    pushToDsr(e, null, false).then(({lines})=>{ if(lines.length) pasToast('✔ Charges sent to DSR ' + refOf(e) + ' (' + lines.length + ' lines)'); })
+      .catch(err=> pasToast('Charges NOT sent: ' + friendly(err)));
   };
 
-  /* ---------- Won: linked quotation → "Nomination" on the SAME DSR shipment ---------- */
+  /* ---------- Won / Lost / back to Sent ---------- */
   const prevSet = setQuoteStatus;   // (the version that opens the create-new dialog when not linked)
   window.setQuoteStatus = setQuoteStatus = function(id, status){
     const entry0 = loadArchive().find(e=>e.id===id);
-    const ref0 = entry0 && entry0.snapshot && entry0.snapshot.dsrRef;
+    const ref0 = refOf(entry0);
 
-    /* ---------- Lost: linked quotation → cancel the shipment in the DSR (after a confirm) ---------- */
     if(status === 'Lost' && ref0){
       showConfirm('Mark this quotation as LOST? The shipment ' + ref0 + ' will be CANCELLED in the DSR.', ()=>{
         prevSet(id, 'Lost');
-        dsr('/shipment/' + encodeURIComponent(ref0) + '/stage', {method:'POST', body: JSON.stringify({stage:'Lost', quoteNo:entry0.ref})})
+        markSameRef(entry0.ref, {status:'Lost'}, id);
+        dsr('/shipment/' + enc(ref0) + '/stage', {method:'POST', body: JSON.stringify({stage:'Lost', quoteNo:entry0.ref})})
           .then((j)=>{
-            const a2 = loadArchive(); const x = a2.find(q=>q.id===id);
-            if(x){ x.dsrNominated = false; x.dsrLost = true; baseSave(a2); }
+            markSameRef(entry0.ref, {dsrNominated:false, dsrLost:true}, null);
+            const a2 = loadArchive(); const x = a2.find(q=>q.id===id); if(x){ x.dsrNominated = false; x.dsrLost = true; baseSave(a2); }
             const d = j && j.data || {};
             pasToast(d.blocked ? ('DSR not changed: ' + d.blocked) : ('DSR updated: ' + ref0 + (d.moved ? ' → Cancelled' : ' (already cancelled)')));
           })
@@ -3470,35 +3587,28 @@ function forgetKey(){}
       return;
     }
 
-    /* ---------- Sent (set back after Lost/Won): shipment returns to "Quoted" ---------- */
     if(status === 'Sent' && ref0 && entry0.dsrLost){
       prevSet(id, 'Sent');
-      dsr('/shipment/' + encodeURIComponent(ref0) + '/stage', {method:'POST', body: JSON.stringify({stage:'Quoted', quoteNo:entry0.ref})})
-        .then(()=>{
-          const a2 = loadArchive(); const x = a2.find(q=>q.id===id);
-          if(x){ x.dsrLost = false; x.dsrQuoted = true; baseSave(a2); }
-          pasToast('DSR updated: ' + ref0 + ' re-opened → Quoted');
-        })
+      markSameRef(entry0.ref, {status:'Sent'}, id);
+      dsr('/shipment/' + enc(ref0) + '/stage', {method:'POST', body: JSON.stringify({stage:'Quoted', quoteNo:entry0.ref})})
+        .then(()=>{ markSameRef(entry0.ref, {dsrLost:false, dsrQuoted:true}, null); const a2 = loadArchive(); const x = a2.find(q=>q.id===id); if(x){ x.dsrLost=false; x.dsrQuoted=true; baseSave(a2); } pasToast('DSR updated: ' + ref0 + ' re-opened → Quoted'); })
         .catch((err)=> pasToast('Could not update DSR: ' + friendly(err)));
       return;
     }
 
-    if(status !== 'Won'){ prevSet(id, status); return; }
-    const entry = loadArchive().find(e=>e.id===id);
-    const ref = entry && entry.snapshot && entry.snapshot.dsrRef;
-    if(!ref){ prevSet(id, status); return; }          // not linked → old behaviour (create new in DSR)
-    // linked: mark Won, then move the existing shipment to Nomination
+    if(status !== 'Won'){ prevSet(id, status); if(entry0 && entry0.ref) markSameRef(entry0.ref, {status}, id); return; }
+    if(!ref0){ prevSet(id, status); return; }          // not linked → old behaviour (create new in DSR)
+
     const arr = loadArchive(); const e2 = arr.find(x=>x.id===id);
-    if(e2){ e2.status = 'Won'; baseSave(arr); renderArchiveList(); }
-    if(entry.dsrNominated && !entry.dsrLost){ pasToast('Already nominated in DSR: ' + ref); return; }
-    dsr('/shipment/' + encodeURIComponent(ref) + '/stage', {method:'POST', body: JSON.stringify({stage:'Nomination', quoteNo:entry.ref})})
-      .then((j)=>{
-        const a = loadArchive(); const x = a.find(q=>q.id===id);
-        if(x){ x.dsrNominated = true; x.dsrLost = false; x.dsrRef = ref; baseSave(a); }
-        pasToast('DSR updated: ' + ref + (j.data.moved ? ' → Nomination' : ' (stage already ahead, history noted)'));
-      })
-      .catch((err)=> pasToast('Could not update DSR: ' + friendly(err) + ' — click Won again to retry'));
+    if(e2){ e2.status = 'Won'; baseSave(arr); }
+    markSameRef(entry0.ref, {status:'Won'}, id);
+    renderArchiveList();
+    sendStage(entry0, 'Nomination').catch(()=>{});
   };
+
+  setTimeout(retryPending, 4000);
+  setInterval(retryPending, 120000);
+  window.addEventListener('online', retryPending);
 })();
 </script>
 
