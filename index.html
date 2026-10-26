@@ -3411,11 +3411,13 @@ function forgetKey(){}
         const p = parseFloat(r.pct)||0; inr = grand * p / 100;
         const fcur = r.cur || 'INR', froe = fcur === 'INR' ? 1 : (parseFloat(r.roe)||1);
         total = inr / froe;
-        line = {particulars:'CHARGES COLLECTION FEE', currency:fcur, rate:total, unit:1, total:total, roe:froe, netCost:inr};
+        line = {particulars:'CHARGES COLLECTION FEE', currency:fcur, rate:p, unit:1, total:total, roe:froe, netCost:inr};   // rate = the percentage; the CAN works out the amount itself
       } else {
         const rate = parseFloat(r.rate)||0, qty = parseFloat(r.qty)||0, roe = parseFloat(r.roe)||0;
         total = rate*qty; inr = total*roe;
-        line = {particulars:desc, currency:r.cur||'INR', rate:rate, unit:qty, total:total, roe:roe||1, netCost:inr};
+        // a fixed-amount fee must not carry the exact name the CAN uses for its percentage fee
+        const pname = desc.toUpperCase() === 'CHARGES COLLECTION FEE' ? 'CHARGES COLLECTION FEE (FIXED)' : desc;
+        line = {particulars:pname, currency:r.cur||'INR', rate:rate, unit:qty, total:total, roe:roe||1, netCost:inr};
       }
       grand += inr||0;
       if(desc || line.particulars==='CHARGES COLLECTION FEE'){
